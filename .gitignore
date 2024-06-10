@@ -1,0 +1,15 @@
+
+# Figure output
+src/tex/figures/*
+
+# Miscellaneous
+__pycache__
+*.synctex.gz
+**/.DS_Store
+
+# virtual env
+venv
+
+# data
+data
+output
