@@ -94,26 +94,3 @@ class MaxEntropy:
 
     def calc_Rmatrix(self):
         pass
-
-
-    def profile_spotmap(self, param, *args, **kw):
-        """Model line profiles, assuming a simple one-spot model.
-
-        phi, theta, R = args[0:3]
-        startemp, spottemp, spotlat, spotlon, spotrad = param[0:5]
-        OR
-        startemp, temp1, lat1, lon1, rad1, temp2, lat2, lon2, rad2 = param[0:9]
-        """
-        # 2013-08-19 09:59 IJMC: Created
-        # 2013-08-27 10:45 IJMC: Updated to multi-spot-capable
-        phi, theta, R = args[0:3]
-        nparam = len(param)
-        nspots = int((nparam-1)/4)
-        startemp = param[0]
-        map_pixels = np.ones(phi.shape) * param[0]
-        for ii in range(nspots):
-            spottemp, spotlat, spotlon, spotrad = param[1+ii*4:1+(ii+1)*4]
-            boolspot = makespot(spotlat, spotlon, spotrad, phi, theta).astype(np.float32)
-            map_pixels -= boolspot * (startemp - spottemp)
-
-        return self.normalize_model(np.dot(map_pixels.ravel(), R), self.nk)

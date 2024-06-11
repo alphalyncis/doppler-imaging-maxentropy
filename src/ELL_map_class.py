@@ -289,13 +289,13 @@ def makespot(spotlat, spotlon, spotrad, phi, theta):
     """
     :INPUTS:
       spotlat : scalar
-        Latitude of spot center, in radians, from 0 to pi
+        Latitude of spot center, in degrees, from 0 to 180 (actually from -90 to 90)
 
       spotlon : scalar
-        Longitude of spot center, in radians, from 0 to 2pi
+        Longitude of spot center, in degrees, from 0 to 360
 
       spotrad : scalar
-        Radius of spot, in radians.
+        Radius of spot, in radians. degrees
 
       phi, theta : 2D NumPy arrays
          output from :func:`makegrid`.  Theta ranges from -pi/2 to +pi/2.
@@ -307,9 +307,9 @@ def makespot(spotlat, spotlon, spotrad, phi, theta):
         nlat, nlon = 60, 30
         phi, theta = maps.makegrid(nlat, nlon)
         # Make a small spot centered near, but not at, the equator:
-        equator_spot = maps.makespot(0, 0, 0.4, phi, theta)
+        equator_spot = maps.makespot(0, 0, 23, phi, theta)
         # Make a larger spot centered near, but not at, the pole:
-        pole_spot = maps.makespot(1.2, 0, 0.7, phi, theta)
+        pole_spot = maps.makespot(68, 0, 40, phi, theta)
 
       ::
 
@@ -319,12 +319,16 @@ def makespot(spotlat, spotlon, spotrad, phi, theta):
         phi = map.corners_latlon.mean(2)[:,1].reshape(nlon, nlat)
         theta = map.corners_latlon.mean(2)[:,0].reshape(nlon, nlat) - np.pi/2.
         # Make a small spot centered near, but not at, the equator:
-        equator_spot = maps.makespot(0, 0, 0.4, phi, theta)
+        equator_spot = maps.makespot(0, 0, 23, phi, theta)
         # Make a larger spot centered near, but not at, the pole:
-        pole_spot = maps.makespot(1.2, 0, 0.7, phi, theta)
+        pole_spot = maps.makespot(68, 0, 40, phi, theta)
 
     """
     # 2013-08-18 16:01 IJMC: Created
+
+    spotlat *= (np.pi/180)
+    spotlon *= (np.pi/180)
+    spotrad *= (np.pi/180)
 
     pi2 = 0.5*np.pi
     xyz = np.array((np.cos(phi) * np.sin(theta + pi2), np.sin(phi) * np.sin(theta + pi2), np.cos(theta + pi2))).reshape(3, phi.size)
@@ -343,62 +347,28 @@ def makespot(spotlat, spotlon, spotrad, phi, theta):
 
     return spotmap.reshape(phi.shape)
 
-def makespot_old(phi, theta, da=None, vmap=None, inc=None, rot=None, long=0, lat=0, siz=pi/4, plotalot=False):
-    """Make a spot-map.
+def profile_spotmap(param, *args, **kw):
+    """Model line profiles, assuming a simple one-spot model.
 
-    EXAMPLE:
-    import maps
-    inc, rot = pi/2., 0.
-    phi, theta = maps.makegrid(120,60)
-    phi2, theta2 = maps.rotcoord(phi,theta,inc,rot)
-    vmap = maps.visiblemap(phi,theta,inc,rot)
+    phi, theta, R = args[0:3]
+    startemp, spottemp, spotlat, spotlon, spotrad = param[0:5]
+    OR
+    startemp, temp1, lat1, lon1, rad1, temp2, lat2, lon2, rad2 = param[0:9]
+    """
+    # 2013-08-19 09:59 IJMC: Created
+    # 2013-08-27 10:45 IJMC: Updated to multi-spot-capable
+    phi, theta, R = args[0:3]
+    nparam = len(param)
+    nspots = int((nparam-1)/4)
+    startemp = param[0]
+    map_pixels = np.ones(phi.shape) * param[0]
+    for ii in range(nspots):
+        spottemp, spotlat, spotlon, spotrad = param[1+ii*4:1+(ii+1)*4]
+        boolspot = makespot(spotlat, spotlon, spotrad, phi, theta).astype(np.float32)
+        map_pixels -= boolspot * (startemp - spottemp)
 
-    maps.makespot(phi,theta,inc=pi/2,rot=0.,lat=pi/4,long=1.*pi)
-    maps.makespot(phi2,theta2,vmap=vmap,lat=pi/4,long=1.*pi)
+    return np.dot(map_pixels.ravel(), R)
 
-
-"""
-    if plotalot:
-        import matplotlib.pyplot as plt # EB update : from pylab import * 
-        import numpy as np
-        from tools import nextfig
-        figure(nextfig(), [15,15]); clf()
-    if da is None:
-        da = projarea(phi,theta)
-    if plotalot:
-        subplot(3,3,1)
-        imshow(phi); colorbar(); title('phi')
-        subplot(3,3,2)
-        imshow(theta); colorbar(); title('theta')
-        subplot(3,3,3)
-        imshow(da); colorbar(); title('d_area')
-
-    if inc is not None and rot is not None:
-        phi, theta = rotcoord(phi,theta,inc,rot)
-        if vmap is None:
-            vmap = visiblemap(phi,theta,inc,rot)
-    if plotalot:
-        subplot(3,3,4)
-        imshow(phi); colorbar(); title('phi')
-        subplot(3,3,5)
-        imshow(theta); colorbar(); title('theta')
-        subplot(3,3,6)
-        imshow(vmap); title('vmap: inc=%s, rot=%s'%(inc,rot)); colorbar()
-
-    if long is not None and lat is not None:
-        phi, theta, = rotcoord(phi,theta,-lat, -long)
-    spot = vmap*da*((theta-theta.max())>-siz)
-    if plotalot:
-        subplot(3,3,7)
-        imshow(phi); colorbar(); title('phi')
-        subplot(3,3,8)
-        imshow(theta); colorbar(); title('theta')
-        subplot(3,3,9)
-        imshow(spot); title('spot: lat=%s, long=%s'%(lat,long)); colorbar()
-
-
-    return phi, theta, da, vmap, spot, (inc, rot, long, lat, siz)
-    
 
 class mapcell:
     def __init__(self):
