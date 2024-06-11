@@ -370,7 +370,7 @@ def profile_spotmap(param, *args, **kw):
     return np.dot(map_pixels.ravel(), R)
 
 
-class mapcell:
+class MapCell:
     def __init__(self):
         self.corners = np.zeros((3, 4), dtype=float)
         self.corners_latlon = np.zeros((2, 4), dtype=float)
@@ -437,7 +437,7 @@ class mapcell:
         return
 
 
-class map:
+class Map:
     """Very handy spherical mapping object.
     :INPUTS:
   
@@ -525,7 +525,7 @@ class map:
             kk = 0
             for ii in range(self.nlat):
                 for jj in range(self.nlon):
-                    cell = mapcell()
+                    cell = MapCell()
                     cell.corners = xyz3[:, ii:ii+2, jj:jj+2].reshape(3,4)
                     cell.corners_latlon = np.vstack((theta[ii:ii+2,jj:jj+2].ravel(), phi[ii:ii+2,jj:jj+2].ravel()))
                     cell.rvcorners = xyz3[1,ii:ii+2,jj:jj+2].ravel() * np.cos(inc)
@@ -594,7 +594,7 @@ class map:
             kk=0
             for m in range(self.nlat):
                 for n in range(self.nlon[m]):
-                    cell = mapcell()
+                    cell = MapCell()
                     cell.corners = xyz_3d[m][:,:,n]
                     cell.corners_latlon = np.vstack([theta_corners_3d[m][:,n], phi_corners_3d[m][:,n]])
                     cell.rvcorners = xyz_3d[m][1,:,n] * np.cos(inc)
@@ -631,3 +631,23 @@ class map:
 
         return profile
 
+    def plot_map_cells(self):
+        '''Plot the map cells on a Mollweide projection.'''
+        fig = plt.figure(figsize=(6,5))
+        ax = fig.add_subplot(111, projection="mollweide")
+        ax.grid(True)
+        good = (self.projected_area>0)
+        for k in range(self.ncell):
+            lats = self.corners_latlon[k][0]
+            lons = self.corners_latlon[k][1]
+
+            y = np.array([lats[0], lats[1], lats[3], lats[2]]) - np.pi/2
+            x = np.array([lons[0], lons[1], lons[3], lons[2]]) - np.pi
+            # Plot the polygon
+            if good[k]:
+                poly = plt.Polygon(np.column_stack((x, y)), facecolor='gray', edgecolor='black')
+                ax.add_patch(poly)
+                ax.text(x.mean(), y.mean(), f"{k}", size=5)
+
+        # Set plot parameters
+        ax.set_xticklabels([30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330], fontsize=8)

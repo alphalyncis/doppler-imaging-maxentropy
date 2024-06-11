@@ -2,38 +2,286 @@
 # Original author: Ian Crossfield (Python 2.7)
 
 Handy Routines for Doppler Imaging and Maximum-Entropy.
-
-To start up with data to fit of size N pixels, and M pixels per
-observation, do:
-
-import dime
-dime.setup(N, M)
 """
 
 ######################################################
-
-# 18-02-2020
-# Emma Bubb - change to run on Python 3
-
+# 06-2024 Xueqing Chen: change to class structure
+# 02-2020 Emma Bubb: change to run on Python 3
 ######################################################
 
-# EB update the imported toolkits
 import numpy as np
+import matplotlib.pyplot as plt
 
-class MaxEntropy:
-    """A class for running Maximum Entropy inversions of Doppler images."""
+import scipy.constants as const
+from scipy import interpolate
+from scipy.signal import savgol_filter
+import starry
+
+import ELL_map_class as ELL_map
+import modelfitting as mf
+
+class DopplerImaging():
+    """A class for Doppler Imaging routines.
+    Attributes
+    ----------
+    obskerns_norm : 3darray, shape=(nobs, nchip, nk)
+        The observed line profiles (kerns).
+
+    intrinsic_profiles : 2darray, shape=(nchip, nk)
+        The model line profiles (modekerns).
+
+    dbeta: float
+        d_lam/lam_ref of the wavelength range that the line profile sits on.
+
+    nk: int
+        Size of line profile kernel.
+
+    nobs: int
+        Number of observations.
+
+    phases: 1darray, shape=(nobs)
+        Phases corresponding to the obs timesteps. In radian (0~2*pi).
+
+    inc: float
+        Inclination of star in degrees (common definition, 90 is equator-on)
+    """
+
+    def __init__(self, obskerns_norm, intrinsic_profiles, kwargs_IC14,
+                nk, nobs, dbeta):
+        # settings
+        self.alpha = kwargs_IC14['alpha']
+        self.nk = nk
+        self.nobs = nobs
+        self.dbeta = dbeta
+        self.dv = -self.dbeta * np.arange(np.floor(-self.nk/2.+.5), np.floor(self.nk/2.+.5)) * const.c / 1e3 # km/s
+        self.phases = kwargs_IC14['phases']
+        self.inc = kwargs_IC14['inc']
+        self.inc_ = (90 - self.inc) * np.pi / 180 # IC14 defined 0 <-> equator-on, pi/2 <-> face-on
+        self.vsini = kwargs_IC14['vsini']
+        self.lld = kwargs_IC14['LLD']
+        self.iseqarea = kwargs_IC14['eqarea']
+        self.nlat = kwargs_IC14['nlat']
+        self.nlon = kwargs_IC14['nlon']
+
+        self.obskerns_norm = obskerns_norm
+        self.intrinsic_profiles = intrinsic_profiles
+
+        ### Set up the intrinsic profile function
+        mean_profile = np.median(self.intrinsic_profiles, axis=0) # can safely take means over chips now
+        modIP = 1. - np.concatenate((np.zeros(300), mean_profile, np.zeros(300)))
+        modDV = - np.arange(np.floor(-modIP.size/2.+.5), np.floor(modIP.size/2.+.5)) * self.dbeta * const.c / 1e3
+        self.modelfunc = interpolate.UnivariateSpline(modDV[::-1], modIP[::-1], k=1., s=0.) # function that returns the intrinsic profile
+
+        ### Set up observed data and weights
+        self.observed_1d = np.median(self.obskerns_norm, axis=1).ravel() # mean over chips and ravel to 1d
+
+        # calc error for each obs as the weights
+        smoothed = savgol_filter(self.obskerns_norm, 31, 3)
+        resid = self.obskerns_norm - smoothed
+        err_pix = np.array([np.abs(resid[:,:,pix] - np.median(resid, axis=2)) for pix in range(self.nk)]) # error of each pixel in LP by MAD, shape=(nk, nobs, nchips)
+        err_LP = 1.4826 * np.median(err_pix, axis=0) # error of each LP, shape=(nobs, nchips)
+        err_each_obs = err_LP.mean(axis=1) # error of each obs, shape=(nobs)
+        err_observed_1d = np.tile(err_each_obs[:, np.newaxis], (1,self.nk)).ravel() # look like a step function over different times
+
+        # mask out non-surface velocity space with weight=0
+        width = int(self.vsini/1e3/np.abs(np.diff(self.dv).mean())) + 15 # vsini edge plus uncert=3
+        central_indices = np.arange(self.nobs) * self.nk + int(self.nk/2)
+        mask = np.zeros_like(self.observed_1d, dtype=bool)
+        for central_idx in central_indices:
+            mask[central_idx - width:central_idx + width + 1] = True
+        self.weights = (mask==True).astype(float) / err_observed_1d **2
+
+        ### Set up Map object
+        if self.iseqarea:
+            self.dmap = ELL_map.Map(nlat=self.nlat, nlon=self.nlon, type='eqarea', inc=self.inc_, verbose=True)
+        else:
+            self.dmap = ELL_map.Map(nlat=self.nlat, nlon=self.nlon, inc=self.inc_) #ELL_map.map returns a class object
+
+        self.ncell = self.dmap.ncell
+        self.uncovered = list(range(self.ncell))
+        self.flatguess = 100 * np.ones(self.ncell)
+        self.bounds = [(1e-6, 300)] * self.ncell
+
+        ### Set up the R matrix
+        self.Rmatrix = np.zeros((self.ncell, self.nobs*self.dv.size), dtype=np.float32)
+        self.compute_Rmatrix()
+
+        ### Set up attributes for results
+        self.bestparams = None
+        self.bestparamgrid = None
+        self.metric = None
+        self.chisq = None
+        self.entropy = None
+
+    def solve_scipy(self, plot_cells=False):
+        """
+        From IC14 except kerns used to compute weights should take 
+        input from cen_kerns (profiles centered to rv=0).
+        ***inc in degrees (90 <-> equator-on).***
+
+        Returns
+        -------
+        bestparamgrid: 2darray, shape=(nlon, nlat)
+            Optimized surface map. 
+            Cells corresponding to longitude 0~2*pi, latitude 0~pi.
+
+        """
+        from scipy.optimize import minimize
+
+        # minimize
+        res = minimize(self.entropy_map_norm_sp, self.flatguess, method='L-BFGS-B', jac=self.getgrad_norm_sp, options={'ftol':self.ftol})
+        bestparamgrid = res.x.reshape(self.nlon, self.nlat)
+
+        return bestparamgrid
+    
+    def solve(self, create_obs_from_diff=True, maxiter=1e4, ftol=0.01):
+        '''Solve the Doppler imaging problem using the Maximum Entropy method.'''
+        dime = MaxEntropy(self.alpha, self.nk, self.nobs)
+        flatmodel = dime.normalize_model(np.dot(self.flatguess, self.Rmatrix))
+        flatmodel_2d = np.reshape(flatmodel, (self.nobs, self.nk))
+
+        # create diff+flat profile
+        self.nchip = self.obskerns_norm.shape[1]
+        uniform_profiles = np.zeros((self.nchip, self.nk))
+        for c in range(self.nchip):
+            uniform_profiles[c] = self.obskerns_norm[:,c].mean(axis=0) # time-avged LP for each chip
+        mean_dev = np.median(np.array([self.obskerns_norm[:,c]-uniform_profiles[c] for c in range(self.nchip)]), axis=0) # mean over chips
+        new_observation_2d = mean_dev + flatmodel_2d
+        new_observation_1d = new_observation_2d.ravel()
+
+        if create_obs_from_diff:
+            self.observed_1d = new_observation_1d
+
+        # Scale the observations to match the model's equivalent width:
+        out, eout = mf.lsq((self.observed_1d, np.ones(self.nobs*self.nk)), flatmodel, w=self.weights)
+        self.observed_1d = self.observed_1d * out[0] + out[1]
+
+        ### Solve!
+        dime.set_data(self.observed_1d,self.weights, self.Rmatrix)
+        bfit = mf.gfit(dime.entropy_map_norm_sp, self.flatguess, fprime=dime.getgrad_norm_sp, 
+                       args=(), ftol=ftol, disp=1, maxiter=maxiter, bounds=self.bounds)
+        self.bestparams = bfit[0]
+        #model_observation = dime.normalize_model(np.dot(bestparams, self.Rmatrix))
+        self.metric, self.chisq, self.entropy = dime.entropy_map_norm_sp(self.bestparams, retvals=True)
+        print("metric:", self.metric, "chisq:", self.chisq, "entropy:", self.entropy)
+
+        self.bestparams[self.uncovered] = np.nan # set completely uncovered cells to nan
+        bestparams2d = self.reshape_map_to_grid() # update self.bestparamgrid
+        self.bestparamgrid = np.roll(np.flip(bestparams2d, axis=1), 
+                                       int(0.5*bestparams2d.shape[1]), axis=1)
+
+    def compute_Rmatrix(self):
+        """
+        Compute the R matrix for the inversion.
+        """
+        for kk, rot in enumerate(self.phases):
+            speccube = np.zeros((self.ncell, self.dv.size), dtype=np.float32) 
+            if self.iseqarea:
+                this_map = ELL_map.Map(nlat=self.nlat, nlon=self.nlon, type='eqarea', inc=self.inc_, deltaphi=-rot)
+            else:
+                this_map = ELL_map.Map(nlat=self.nlat, nlon=self.nlon, inc=self.inc_, deltaphi=-rot)
+            this_doppler = 1. + self.vsini*this_map.visible_rvcorners.mean(1)/const.c/np.cos(self.inc_) # mean rv of each cell in m/s
+            good = (this_map.projected_area>0) * np.isfinite(this_doppler)    
+            for ii in good.nonzero()[0]:
+                if ii in self.uncovered:
+                    self.uncovered.remove(ii) # remove cells that are visible at this rot
+                speccube[ii,:] = self.modelfunc(self.dv + (this_doppler[ii]-1)*const.c/1000.)
+            limbdarkening = (1. - self.lld) + self.lld * this_map.mu
+            Rblock = speccube * ((limbdarkening*this_map.projected_area).reshape(this_map.ncell, 1)*np.pi/this_map.projected_area.sum())
+            self.Rmatrix[:, self.dv.size*kk:self.dv.size*(kk+1)] = Rblock
+
+    def reshape_map_to_grid(self, plot_unstretched_map=False):
+        '''Reshape a 1D map to a 2D grid.
+        Returns 2d map grid.'''
+        if self.iseqarea:
+            # reshape into list
+            start = 0
+            bestparamlist = []
+            for m in range(self.dmap.nlat):
+                bestparamlist.append(self.bestparams[start:start+self.dmap.nlon[m]])
+                start = start + self.dmap.nlon[m]
+            # interp into rectangular array
+            max_length = max([len(x) for x in bestparamlist])
+            stretched_arrays = []
+            for array in bestparamlist:
+                x_old = np.arange(len(array))
+                x_new = np.linspace(0, len(array) - 1, max_length)
+                y_new = np.interp(x_new, x_old, array)
+                stretched_arrays.append(y_new)
+
+            bestparams2d = np.vstack(stretched_arrays)
+
+            if plot_unstretched_map:
+                # pad into rectangular array
+                padded_arrays = []
+                for array in bestparamlist:
+                    left_pad = int((max_length - len(array)) / 2)
+                    right_pad = max_length - len(array) - left_pad
+                    padded_array = np.pad(array, (left_pad, right_pad), 'constant')
+                    padded_arrays.append(padded_array)
+                    array_2d = np.vstack(padded_arrays)
+                    plt.imshow(array_2d, cmap='plasma')
+
+        else:
+            bestparams2d = np.reshape(self.bestparams, (-1, self.nlon))
+
+        return bestparams2d
+
+    def plot_IC14_map(self, colorbar=False, clevel=5, sigma=1, vmax=None, vmin=None, cmap=plt.cm.plasma, annotate=False):
+        '''Plot doppler map from an array.'''
+        cmap = plt.cm.plasma.copy()
+        cmap.set_bad('gray', 1)
+        fig = plt.figure(figsize=(5,3))
+        ax = fig.add_subplot(111, projection='mollweide')
+        lon = np.linspace(-np.pi, np.pi, self.bestparamgrid.shape[1])
+        lat = np.linspace(-np.pi/2., np.pi/2., self.bestparamgrid.shape[0])
+        Lon, Lat = np.meshgrid(lon,lat)
+        if vmax is None:
+            im = ax.pcolormesh(Lon, Lat, self.bestparamgrid, cmap=cmap, shading='gouraud')
+        else:
+            im = ax.pcolormesh(Lon, Lat, self.bestparamgrid, cmap=cmap, shading='gouraud', vmin=vmin, vmax=vmax)
+        #contour = ax.contour(Lon, Lat, gaussian_filter(bestparamgrid, sigma), clevel, colors='white', linewidths=0.5)
+        if colorbar:
+            fig.colorbar(im, fraction=0.065, pad=0.2, orientation="horizontal", label="%")
+        yticks = np.linspace(-np.pi/2, np.pi/2, 7)[1:-1]
+        xticks = np.linspace(-np.pi, np.pi, 13)[1:-1]
+        ax.set_yticks(yticks, labels=[f'{deg:.0f}˚' for deg in yticks*180/np.pi], fontsize=7, alpha=0.5)
+        ax.set_xticks(xticks, labels=[f'{deg:.0f}˚' for deg in xticks*180/np.pi], fontsize=7, alpha=0.5)
+        ax.grid('major', color='k', linewidth=0.25)
+        for item in ax.spines.values():
+            item.set_linewidth(1.2)
+
+        if annotate:
+            map_type = "eqarea" if self.iseqarea else "latlon"
+            plt.text(-3.5, -1, f"""
+                chip=averaged{kwargs_fig['goodchips']} 
+                solver=IC14new {map_type} 
+                noise={kwargs_fig['noisetype']} 
+                err_level={flux_err} 
+                contrast={kwargs_fig['contrast']} 
+                limbdark={self.lld}""",
+            fontsize=8)
+
+    def plot_starry(self, ydeg=7, colorbar=False):
+        fig, ax = plt.subplots(figsize=(7,3))
+        showmap = starry.Map(ydeg=ydeg)
+        showmap.load(self.bestparamgrid_r)
+        showmap.show(ax=ax, projection="moll", colorbar=colorbar)
+
+class MaxEntropy():
+    """A class for Maximum Entropy computations for Doppler imaging."""
 
     def __init__(self, alpha, nk, nobs):
-        self.data = None
-        self.weights = None
-        self.Rmatrix = None
         self.alpha = alpha
         self.nk = nk
         self.nobs = nobs
+        self.data = None
+        self.weights = None
+        self.Rmatrix = None
         self.j = np.arange(self.nk * self.nobs)
-        self.k = (np.floor(1.0*self.j / self.nk) * self.nk).astype(int)
-        self.l = (np.ceil((self.j + 1.0) / self.nk) * self.nk - 1).astype(int)
-        self.jfrac = (self.j % self.nk) / (self.nk - 1.0)
+        self.k = (np.floor(1.*self.j / self.nk) * self.nk).astype(int)
+        self.l = (np.ceil((self.j + 1.) / self.nk) * self.nk - 1.).astype(int)
+        self.jfrac = (self.j % self.nk) / (self.nk - 1.)
 
     def set_data(self, data, weights, Rmatrix):
         self.data = data
@@ -49,7 +297,7 @@ class MaxEntropy:
         return entropy
 
     def dnentropy_dx(self, x):
-        xsum = 1.0*np.sum(x)
+        xsum = 1. * np.sum(x)
         norm_x = x / xsum
         nx = len(x)
         vec2 = np.log(norm_x) + 1.
@@ -91,6 +339,3 @@ class MaxEntropy:
             return metric, chisq, entropy
         else:
             return metric
-
-    def calc_Rmatrix(self):
-        pass

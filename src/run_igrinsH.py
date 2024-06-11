@@ -1,4 +1,5 @@
 from doppler_imaging import *
+from dime import *
 import numpy as np
 import paths
 
@@ -14,7 +15,7 @@ savedir = "igrinsH"
 band = "H"
 nk = 125
 alpha = 2000
-#goodchips_run[instru][target][band] = [1,2,3,4]
+goodchips_run[instru][target][band] = [2,3,4]
 modelspec = "t1400g1000f8"
 
 
@@ -100,12 +101,16 @@ print(f"Using real observation {model_datafile}")
 mean_spectrum, template, observed, residual, error, wav_nm, wav0_nm = load_data(model_datafile, instru, nobs, goodchips)
 
 # Compute LSD mean profile
-intrinsic_profiles, obskerns_norm = make_LSD_profile(instru, template, observed, wav_nm, goodchips, pmod, line_file, cont_file, nk, 
+intrinsic_profiles, obskerns_norm, dbeta = make_LSD_profile(instru, template, observed, wav_nm, goodchips, pmod, line_file, cont_file, nk, 
                                                      vsini, rv, period, timestamps[target], savedir, cut=cut)
 
-bestparamgrid_r, res = solve_IC14new(intrinsic_profiles, obskerns_norm, kwargs_IC14, kwargs_fig, annotate=False, colorbar=False, vmin=85, vmax=110)
+#bestparamgrid_r, res = solve_IC14new(intrinsic_profiles, obskerns_norm, kwargs_IC14, kwargs_fig, annotate=False, colorbar=False, vmin=85, vmax=110)
 #plot_IC14_map(bestparamgrid_r, colorbar=False, vmin=85, vmax=110)
-mapB_H = bestparamgrid_r.copy()
+mapB_H = DopplerImaging(obskerns_norm, intrinsic_profiles, kwargs_IC14, nk, nobs, dbeta)
+mapB_H.solve(create_obs_from_diff=True)
+mapB_H.plot_IC14_map(colorbar=False, vmin=85, vmax=110)
+plt.savefig(paths.figures / f"{kwargs_fig['savedir']}/solver1.png", bbox_inches="tight", dpi=100, transparent=True)
+
 
 #LSDlin_map = solve_LSD_starry_lin(intrinsic_profiles, obskerns_norm, kwargs_run, kwargs_fig, annotate=False, colorbar=False)
 

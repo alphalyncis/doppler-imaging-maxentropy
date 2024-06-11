@@ -360,69 +360,7 @@ def make_LSD_profile(instru, template, observed, wav_nm, goodchips, pmod, line_f
     ### Plot deviation map for each chip and mean deviation map
     plot_deviation_map(obskerns_norm, goodchips, dv, vsini, timestamps, savedir, meanby="median", cut=cut, colorbar=colorbar)
 
-    return intrinsic_profiles, obskerns_norm
-
-def solve_IC14new(intrinsic_profiles, obskerns_norm, kwargs_IC14, kwargs_fig, clevel=7,
-                  ret_both=True, annotate=False, colorbar=False, plot_cells=False, plot_starry=False, plot_fit=False,
-                  spotfit=False, create_obs_from_diff=True, vmin=85, vmax=110):
-    print("*** Using solver IC14new ***")
-    nobs, nk = obskerns_norm.shape[0], obskerns_norm.shape[2]
-
-    bestparamgrid, res = solve_DIME(
-        obskerns_norm, intrinsic_profiles,
-        dbeta, nk, nobs, **kwargs_IC14, plot_cells=plot_cells, spotfit=spotfit,
-        create_obs_from_diff=create_obs_from_diff
-    )
-
-    bestparamgrid_r = np.roll(
-        np.flip(bestparamgrid, axis=1), int(0.5*bestparamgrid.shape[1]), axis=1)
-    # TODO: derotate map??? seems like Ic14 maps are flipped and rolled 180 deg
-
-    if plot_starry:
-        fig, ax = plt.subplots(figsize=(7,3))
-        showmap = starry.Map(ydeg=7)
-        showmap.load(bestparamgrid_r)
-        showmap.show(ax=ax, projection="moll", colorbar=colorbar)
-    
-    else:
-        #pass
-        #plot_IC14_map(bestparamgrid_r, clevel=clevel, sigma=2., colorbar=colorbar) # smoothed contour lines
-        plot_IC14_map(bestparamgrid_r, colorbar=colorbar, vmin=vmin, vmax=vmax)
-
-    map_type = "eqarea" if kwargs_IC14['eqarea'] else "latlon"
-    if annotate:
-        plt.text(-3.5, -1, f"""
-            chip=averaged{kwargs_fig['goodchips']} 
-            solver=IC14new {map_type} 
-            noise={kwargs_fig['noisetype']} 
-            err_level={flux_err} 
-            contrast={kwargs_fig['contrast']} 
-            limbdark={kwargs_IC14['LLD']}""",
-        fontsize=8)
-    plt.savefig(paths.figures / f"{kwargs_fig['savedir']}/solver1.png", bbox_inches="tight", dpi=100, transparent=True)
-
-    # Plot fit result
-    if plot_fit:
-        obs_2d = np.reshape(res['sc_observation_1d'], (nobs, nk))
-        bestmodel_2d = np.reshape(res['model_observation'], (nobs, nk))
-        flatmodel_2d = np.reshape(res['flatmodel'], (nobs, nk))
-
-        plt.figure(figsize=(5, 7))
-        for i in range(nobs):
-            plt.plot(res['dv'], obs_2d[i] - 0.02*i, color='k', linewidth=1)
-            #plt.plot(obs[i] - 0.02*i, '.', color='k', markersize=2)
-            plt.plot(res['dv'], bestmodel_2d[i] - 0.02*i, color='r', linewidth=1)
-            plt.plot(res['dv'], flatmodel_2d[i] - 0.02*i, '--', color='gray', linewidth=1)
-        plt.legend(labels=['obs', 'best-fit map', 'flat map'])
-    try:
-        plt.savefig(paths.figures / f"{kwargs_fig['savedir']}/solver1_ts.png", bbox_inches="tight", dpi=150, transparent=True)
-    except:
-        pass
-
-    if ret_both:
-        return bestparamgrid_r, res
-    else:
-        return bestparamgrid_r
+    return intrinsic_profiles, obskerns_norm, dbeta
 
 def solve_LSD_starry_lin(intrinsic_profiles, obskerns_norm, kwargs_run, kwargs_fig, annotate=False, colorbar=True):
     print("*** Using solver LSD+starry_lin ***")
@@ -1059,304 +997,6 @@ def plot_timeseries(map, modelspec, theta, obsflux=None, overlap=8.0, figsize=(5
     fac = (np.max(modelspec) - np.min(modelspec)) / overlap
     ax_f[0].set_ylim(-fac, fac)
  
-def plot_map_cells(map_obj):
-    fig = plt.figure(figsize=(6,5))
-    ax = fig.add_subplot(111, projection="mollweide")
-    ax.grid(True)
-    good = (map_obj.projected_area>0)
-    for k in range(map_obj.ncell):
-        lats = map_obj.corners_latlon[k][0]
-        lons = map_obj.corners_latlon[k][1]
-
-        y = np.array([lats[0], lats[1], lats[3], lats[2]]) - np.pi/2
-        x = np.array([lons[0], lons[1], lons[3], lons[2]]) - np.pi
-        # Plot the polygon
-        if good[k]:
-            poly = plt.Polygon(np.column_stack((x, y)), facecolor='gray', edgecolor='black')
-            ax.add_patch(poly)
-            ax.text(x.mean(), y.mean(), f"{k}", size=5)
-        #ax.text(x.mean()-0.1, y.mean()-0.07, f"a:{map_obj.projected_area[k]:.3f}", size=3)
-
-    # Set plot parameters
-    ax.set_xticklabels([30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330], fontsize=8)
-
-def solve_DIME(
-        obskerns_norm: np.ndarray, 
-        intrinsic_profiles: np.ndarray,
-        dbeta: float, 
-        nk: int, nobs: int, 
-        phases: np.ndarray, 
-        inc: float, vsini: float, LLD: float, 
-        eqarea: bool = True,
-        nlat: int = 20, nlon: int = 40,
-        alpha: int = 4500, ftol: float = 0.01,
-        plot_cells: bool = False,
-        plot_unstretched_map: bool = False,
-        spotfit: bool = False,
-        create_obs_from_diff: bool = True
-    ) -> np.ndarray:
-    """
-    Copied from IC14orig except kerns used to compute weights should take 
-    input from cen_kerns (profiles centered to rv=0).
-    ***inc in degrees (90 <-> equator-on).***
-
-    Parameters
-    ----------
-    obskerns_norm : 3darray, shape=(nobs, nchip, nk)
-        The observed line profiles (kerns).
-
-    intrinsic_profiles : 2darray, shape=(nchip, nk)
-        The model line profiles (modekerns).
-
-    dbeta: float
-        d_lam/lam_ref of the wavelength range that the line profile sits on.
-
-    nk: int
-        Size of line profile kernel.
-
-    nobs: int
-        Number of observations.
-
-    phases: 1darray, shape=(nobs)
-        Phases corresponding to the obs timesteps. In radian (0~2*pi).
-
-    inc: float
-        Inclination of star in degrees (common definition, 90 is equator-on)
-
-    Returns
-    -------
-    bestparamgrid: 2darray, shape=(nlon, nlat)
-        Optimized surface map. 
-        Cells corresponding to longitude 0~2*pi, latitude 0~pi.
-
-    """
-    # Can safely take means over chips now
-    mean_profile = np.median(intrinsic_profiles, axis=0) # mean over chips
-    observation_2d = np.median(obskerns_norm, axis=1)
-    observation_1d = observation_2d.ravel() # mean over chips and ravel to 1d
-
-    # calc error for each obs
-    smoothed = savgol_filter(obskerns_norm, 31, 3)
-    resid = obskerns_norm - smoothed
-    err_pix = np.array([np.abs(resid[:,:,pix] - np.median(resid, axis=2)) for pix in range(nk)]) # error of each pixel in LP by MAD, shape=(nk, nobs, nchips)
-    err_LP = 1.4826 * np.median(err_pix, axis=0) # error of each LP, shape=(nobs, nchips)
-    err_each_obs = err_LP.mean(axis=1) # error of each obs, shape=(nobs)
-    err_observation_1d = np.tile(err_each_obs[:, np.newaxis], (1,nk)).ravel() # look like a step function over different times
-
-    ### Prepare data for DIME
-    modIP = 1. - np.concatenate((np.zeros(300), mean_profile, np.zeros(300)))
-    modDV = - np.arange(np.floor(-modIP.size/2.+.5), np.floor(modIP.size/2.+.5)) * dbeta * const.c / 1e3
-    flineSpline = interpolate.UnivariateSpline(modDV[::-1], modIP[::-1], k=1., s=0.) # function that returns the intrinsic profile
-    dv = -dbeta * np.arange(np.floor(-nk/2.+.5), np.floor(nk/2.+.5)) * const.c / 1e3 # km/s
-
-    ### Reconstruct map
-
-    # initialize Doppler map object
-    inc_ = (90 - inc) * np.pi / 180 # IC14 defined 0 <-> equator-on, pi/2 <-> face-on
-    if eqarea:
-        mmap = ELL_map.map(nlat=nlat, nlon=nlon, type='eqarea', inc=inc_, verbose=True)
-    else:
-        mmap = ELL_map.map(nlat=nlat, nlon=nlon, inc=inc_) #ELL_map.map returns a class object
-    if plot_cells:
-        plot_map_cells(mmap)
-    ncell = mmap.ncell
-    nx = ncell
-    flatguess = 100*np.ones(nx)
-    bounds = [(1e-6, 300)]*nx
-    allfits = []
-
-    # Compute R matrix
-    Rmatrix = np.zeros((ncell, nobs*dv.size), dtype=np.float32)
-    uncovered = list(range(ncell))
-    for kk, rot in enumerate(phases):
-        speccube = np.zeros((ncell, dv.size), dtype=np.float32) 
-        if eqarea:
-            this_map = ELL_map.map(nlat=nlat, nlon=nlon, type='eqarea', inc=inc_, deltaphi=-rot)
-        else:
-            this_map = ELL_map.map(nlat=nlat, nlon=nlon, inc=inc_, deltaphi=-rot)
-        this_doppler = 1. + vsini*this_map.visible_rvcorners.mean(1)/const.c/np.cos(inc_) # mean rv of each cell in m/s
-        good = (this_map.projected_area>0) * np.isfinite(this_doppler)    
-        for ii in good.nonzero()[0]:
-            if ii in uncovered:
-                uncovered.remove(ii) # remove cells that are visible at this rot
-            speccube[ii,:] = flineSpline(dv + (this_doppler[ii]-1)*const.c/1000.)
-        limbdarkening = (1. - LLD) + LLD * this_map.mu
-        Rblock = speccube * ((limbdarkening*this_map.projected_area).reshape(this_map.ncell, 1)*np.pi/this_map.projected_area.sum())
-        Rmatrix[:,dv.size*kk:dv.size*(kk+1)] = Rblock
-
-    dime = MaxEntropy(alpha, nk, nobs)
-    flatmodel = dime.normalize_model(np.dot(flatguess, Rmatrix))
-    flatmodel_2d = np.reshape(flatmodel, (nobs, nk))
-    
-    # create diff+flat profile
-    nchip = obskerns_norm.shape[1]
-    uniform_profiles = np.zeros((nchip, nk))
-    for c in range(nchip):
-        uniform_profiles[c] = obskerns_norm[:,c].mean(axis=0) # time-avged LP for each chip
-    mean_dev = np.median(np.array([obskerns_norm[:,c]-uniform_profiles[c] for c in range(nchip)]), axis=0) # mean over chips
-    new_observation_2d = mean_dev + flatmodel_2d
-    new_observation_1d = new_observation_2d.ravel()
-
-    if len(allfits)==0:  # Properly scale measurement weights:
-        # Mask out non-surface velocity space with weight=0
-        width = int(vsini/1e3/np.abs(np.diff(dv).mean())) + 15 # vsini edge plus uncert=3
-        central_indices = np.arange(nobs) * nk + int(nk/2)
-        mask = np.zeros_like(observation_1d, dtype=bool)
-        for central_idx in central_indices:
-            mask[central_idx - width:central_idx + width + 1] = True
-        w_observation = (mask == True).astype(float) / err_observation_1d**2
-
-        if create_obs_from_diff:
-            observation_1d = new_observation_1d
-
-        # Scale the observations to match the model's equivalent width:
-        out, eout = an.lsq((observation_1d, np.ones(nobs*nk)), flatmodel, w=w_observation)
-        sc_observation_1d = observation_1d * out[0] + out[1]
-
-    ### Solve!
-    dime.set_data(sc_observation_1d, w_observation, Rmatrix)
-    bfit = an.gfit(dime.entropy_map_norm_sp, flatguess, fprime=dime.getgrad_norm_sp, args=(), ftol=ftol, disp=1, maxiter=1e4, bounds=bounds)
-    allfits.append(bfit)
-    bestparams = bfit[0]
-    model_observation = dime.normalize_model(np.dot(bestparams, Rmatrix))
-    metric, chisq, entropy = dime.entropy_map_norm_sp(bestparams, retvals=True)
-    print("metric:", metric, "chisq:", chisq, "entropy:", entropy)
-
-    bestparams[uncovered] = np.nan # set completely uncovered cells to nan
-
-    # reshape into grid
-    if eqarea:
-        # reshape into list
-        start=0
-        bestparamlist = []
-        for m in range(this_map.nlat):
-            bestparamlist.append(bestparams[start:start+this_map.nlon[m]])
-            start = start + this_map.nlon[m]
-        # interp into rectangular array
-        max_length = max([len(x) for x in bestparamlist])
-        stretched_arrays = []
-        for array in bestparamlist:
-            x_old = np.arange(len(array))
-            x_new = np.linspace(0, len(array) - 1, max_length)
-            y_new = np.interp(x_new, x_old, array)
-            stretched_arrays.append(y_new)
-
-        bestparamgrid = np.vstack(stretched_arrays)
-
-        if plot_unstretched_map:
-            # pad into rectangular array
-            padded_arrays = []
-            for array in bestparamlist:
-                left_pad = int((max_length - len(array)) / 2)
-                right_pad = max_length - len(array) - left_pad
-                padded_array = np.pad(array, (left_pad, right_pad), 'constant')
-                padded_arrays.append(padded_array)
-                array_2d = np.vstack(padded_arrays)
-                plt.imshow(array_2d, cmap='plasma')
-                #plt.show()
-
-    else:
-        bestparamgrid = np.reshape(bestparams, (-1, nlon))
-
-    res = dict(
-        bestparams=bestparams,
-        bestparamgrid=bestparamgrid, 
-        Q=metric, chisq=chisq, entropy=entropy,
-        Rmatrix=Rmatrix,
-        model_observation=model_observation,
-        sc_observation_1d=sc_observation_1d,
-        w_observation=w_observation,
-        flatmodel=flatmodel,
-        flineSpline=flineSpline,
-        mmap=mmap, dv=dv, dbeta=dbeta,
-        cc=cc, sampler=sampler
-    )
-        
-    return bestparamgrid, res
-
-def get_emcee_start(bestparams, variations, nwalkers, maxchisq, args, homein=True, retchisq=False, depth=np.inf):
-    """Get starting positions for EmCee walkers.
-
-    :INPUTS:
-      bestparams : sequence (1D NumPy array)
-        Optimal parameters for your fitting function (length N)
-
-      variations : 1D or 2D NumPy array
-        If 1D, this should be length N and new trial positions will be
-        generated using numpy.random.normal(bestparams,
-        variations). Thus all values should be greater than zero!
-
-        If 2D, this should be size (N x N) and we treat it like a
-        covariance matrix; new trial positions will be generated using
-        numpy.random.multivariate_normal(bestparams, variations). 
-
-      nwalkers : int
-        Number of positions to be chosen.
-
-      maxchisq : int
-        Maximum "chi-squared" value for a test position to be
-        accepted.  In fact, these values are computed with
-        :func:`phasecurves.errfunc` as errfunc(test_position, *args)
-        and so various priors, penalty factors, etc. can also be
-        passed in as keywords.
-
-      args : tuple
-        Arguments to be passed to :func:`phasecurves.errfunc` for
-        computing 'chi-squared' values.
-
-      homein : bool
-        If True, "home-in" on improved fitting solutions. In the
-        unlikely event that a randomly computed test position returns
-        a better chi-squared than your specified best parameters,
-        reset the calculation to start from the new, improved set of
-        parameters.
-
-      retchisq : bool
-        If True, return the tuple (positions, chisq_at_positions)
-        
-     :BAD_EXAMPLE:
-      ::
-
-        pos0 = tools.get_emcee_start(whitelight_bestfit[0], np.abs(whitelight_bestfit[0])/1000., nwalkers, 10*nobs, mcargs)
-        """
-    # 2013-05-01 11:18 IJMC: Created
-    # 2014-07-24 11:07 IJMC: Fixed typo in warning message.
-    
-    #get_emcee_start(bestparams, variations, nwalkers, maxchisq, args):
-
-    best_chisq = an.errfunc(bestparams, *args)
-    if best_chisq >= maxchisq:
-        print("Specified parameter 'maxchisq' is smaller than the chi-squared value for the specified best parameters. Try increasing maxchisq.")
-        return -1
-
-    npar = len(bestparams)
-    if variations.ndim==2:
-        usecovar = True
-    else:
-        usecovar = False
-
-    pos0 = np.zeros((nwalkers, npar), dtype=float)
-    chisq = np.zeros(nwalkers, dtype=float)
-    npos = 0
-    while npos < nwalkers:
-        if usecovar:
-            testpos = np.random.multivariate_normal(bestparams, variations)
-        else:
-            testpos = np.random.normal(bestparams, variations)
-        testchi = an.errfunc(testpos, *args)
-        if np.isfinite(testchi) and (testchi < best_chisq) and homein and depth>0:
-            return get_emcee_start(testpos, variations, nwalkers, maxchisq, args, homein=homein, retchisq=retchisq, depth=depth-1)
-        elif testchi < maxchisq:
-            pos0[npos] = testpos
-            chisq[npos] = testchi
-            npos += 1
-
-    if retchisq:
-        ret = pos0, chisq
-    else:
-        ret = pos0
-    return ret
-
 def remove_spike(data, kern_size=10, lim_denom=5):
     data_pad = np.concatenate([np.ones(kern_size)*np.median(data[:kern_size]), data, np.ones(kern_size)*np.median(data[-kern_size:-1])])
     data_filt = np.copy(data)
@@ -1495,30 +1135,6 @@ def plot_deviation_map(obskerns_norm, goodchips, dv, vsini, timestamps, savedir,
     plt.tight_layout()
     plt.savefig(paths.figures / f"{savedir}/tvplot.png", bbox_inches="tight", dpi=150, transparent=True)
 
-def plot_IC14_map(bestparamgrid, colorbar=False, clevel=5, sigma=1, vmax=None, vmin=None, cmap=plt.cm.plasma):
-    '''Plot doppler map from an array.'''
-    cmap = plt.cm.plasma.copy()
-    cmap.set_bad('gray', 1)
-    fig = plt.figure(figsize=(5,3))
-    ax = fig.add_subplot(111, projection='mollweide')
-    lon = np.linspace(-np.pi, np.pi, bestparamgrid.shape[1])
-    lat = np.linspace(-np.pi/2., np.pi/2., bestparamgrid.shape[0])
-    Lon, Lat = np.meshgrid(lon,lat)
-    if vmax is None:
-        im = ax.pcolormesh(Lon, Lat, bestparamgrid, cmap=cmap, shading='gouraud')
-    else:
-        im = ax.pcolormesh(Lon, Lat, bestparamgrid, cmap=cmap, shading='gouraud', vmin=vmin, vmax=vmax)
-    #contour = ax.contour(Lon, Lat, gaussian_filter(bestparamgrid, sigma), clevel, colors='white', linewidths=0.5)
-    if colorbar:
-        fig.colorbar(im, fraction=0.065, pad=0.2, orientation="horizontal", label="%")
-    yticks = np.linspace(-np.pi/2, np.pi/2, 7)[1:-1]
-    xticks = np.linspace(-np.pi, np.pi, 13)[1:-1]
-    ax.set_yticks(yticks, labels=[f'{deg:.0f}˚' for deg in yticks*180/np.pi], fontsize=7, alpha=0.5)
-    ax.set_xticks(xticks, labels=[f'{deg:.0f}˚' for deg in xticks*180/np.pi], fontsize=7, alpha=0.5)
-    ax.grid('major', color='k', linewidth=0.25)
-    for item in ax.spines.values():
-        item.set_linewidth(1.2)
-
 def make_gif_map(bestparamgrid, inc, period, savedir, step=15, fps=4, vmax=110):
     fig = plt.figure(figsize=(10,5))
     y, x = bestparamgrid.shape
@@ -1575,3 +1191,286 @@ def make_gif_map(bestparamgrid, inc, period, savedir, step=15, fps=4, vmax=110):
     gif_file = paths.figures / f"{savedir}/solver1_map.gif"
     frames[0].save(gif_file, format='GIF', append_images=frames[1:], save_all=True, duration=duration, loop=0)
     '''
+
+############################################################################################################
+### retired functions ###
+############################################################################################################
+
+def solve_IC14new(intrinsic_profiles, obskerns_norm, kwargs_IC14, kwargs_fig, clevel=7,
+                  ret_both=True, annotate=False, colorbar=False, plot_cells=False, plot_starry=False, plot_fit=False,
+                  spotfit=False, create_obs_from_diff=True, vmin=85, vmax=110):
+    print("*** Using solver IC14new ***")
+    nobs, nk = obskerns_norm.shape[0], obskerns_norm.shape[2]
+
+    bestparamgrid, res = solve_DIME(
+        obskerns_norm, intrinsic_profiles,
+        dbeta, nk, nobs, **kwargs_IC14, plot_cells=plot_cells, spotfit=spotfit,
+        create_obs_from_diff=create_obs_from_diff
+    )
+
+    bestparamgrid_r = np.roll(
+        np.flip(bestparamgrid, axis=1), int(0.5*bestparamgrid.shape[1]), axis=1)
+    # TODO: derotate map??? seems like Ic14 maps are flipped and rolled 180 deg
+
+    if plot_starry:
+        fig, ax = plt.subplots(figsize=(7,3))
+        showmap = starry.Map(ydeg=7)
+        showmap.load(bestparamgrid_r)
+        showmap.show(ax=ax, projection="moll", colorbar=colorbar)
+    
+    else:
+        #pass
+        #plot_IC14_map(bestparamgrid_r, clevel=clevel, sigma=2., colorbar=colorbar) # smoothed contour lines
+        plot_IC14_map(bestparamgrid_r, colorbar=colorbar, vmin=vmin, vmax=vmax)
+
+    map_type = "eqarea" if kwargs_IC14['eqarea'] else "latlon"
+    if annotate:
+        plt.text(-3.5, -1, f"""
+            chip=averaged{kwargs_fig['goodchips']} 
+            solver=IC14new {map_type} 
+            noise={kwargs_fig['noisetype']} 
+            err_level={flux_err} 
+            contrast={kwargs_fig['contrast']} 
+            limbdark={kwargs_IC14['LLD']}""",
+        fontsize=8)
+    plt.savefig(paths.figures / f"{kwargs_fig['savedir']}/solver1.png", bbox_inches="tight", dpi=100, transparent=True)
+
+    # Plot fit result
+    if plot_fit:
+        obs_2d = np.reshape(res['sc_observation_1d'], (nobs, nk))
+        bestmodel_2d = np.reshape(res['model_observation'], (nobs, nk))
+        flatmodel_2d = np.reshape(res['flatmodel'], (nobs, nk))
+
+        plt.figure(figsize=(5, 7))
+        for i in range(nobs):
+            plt.plot(res['dv'], obs_2d[i] - 0.02*i, color='k', linewidth=1)
+            #plt.plot(obs[i] - 0.02*i, '.', color='k', markersize=2)
+            plt.plot(res['dv'], bestmodel_2d[i] - 0.02*i, color='r', linewidth=1)
+            plt.plot(res['dv'], flatmodel_2d[i] - 0.02*i, '--', color='gray', linewidth=1)
+        plt.legend(labels=['obs', 'best-fit map', 'flat map'])
+    try:
+        plt.savefig(paths.figures / f"{kwargs_fig['savedir']}/solver1_ts.png", bbox_inches="tight", dpi=150, transparent=True)
+    except:
+        pass
+
+    if ret_both:
+        return bestparamgrid_r, res
+    else:
+        return bestparamgrid_r
+
+def solve_DIME(
+        obskerns_norm: np.ndarray, 
+        intrinsic_profiles: np.ndarray,
+        dbeta: float, 
+        nk: int, nobs: int, 
+        phases: np.ndarray, 
+        inc: float, vsini: float, LLD: float, 
+        eqarea: bool = True,
+        nlat: int = 20, nlon: int = 40,
+        alpha: int = 4500, ftol: float = 0.01,
+        plot_cells: bool = False,
+        plot_unstretched_map: bool = False,
+        spotfit: bool = False,
+        create_obs_from_diff: bool = True
+    ) -> np.ndarray:
+    """
+    Copied from IC14orig except kerns used to compute weights should take 
+    input from cen_kerns (profiles centered to rv=0).
+    ***inc in degrees (90 <-> equator-on).***
+
+    Parameters
+    ----------
+    obskerns_norm : 3darray, shape=(nobs, nchip, nk)
+        The observed line profiles (kerns).
+
+    intrinsic_profiles : 2darray, shape=(nchip, nk)
+        The model line profiles (modekerns).
+
+    dbeta: float
+        d_lam/lam_ref of the wavelength range that the line profile sits on.
+
+    nk: int
+        Size of line profile kernel.
+
+    nobs: int
+        Number of observations.
+
+    phases: 1darray, shape=(nobs)
+        Phases corresponding to the obs timesteps. In radian (0~2*pi).
+
+    inc: float
+        Inclination of star in degrees (common definition, 90 is equator-on)
+
+    Returns
+    -------
+    bestparamgrid: 2darray, shape=(nlon, nlat)
+        Optimized surface map. 
+        Cells corresponding to longitude 0~2*pi, latitude 0~pi.
+
+    """
+    # Safely take means over chips
+    mean_profile = np.median(intrinsic_profiles, axis=0) # mean over chips
+    observation_2d = np.median(obskerns_norm, axis=1)
+    observation_1d = observation_2d.ravel() # mean over chips and ravel to 1d
+
+    # calc error for each obs
+    smoothed = savgol_filter(obskerns_norm, 31, 3)
+    resid = obskerns_norm - smoothed
+    err_pix = np.array([np.abs(resid[:,:,pix] - np.median(resid, axis=2)) for pix in range(nk)]) # error of each pixel in LP by MAD, shape=(nk, nobs, nchips)
+    err_LP = 1.4826 * np.median(err_pix, axis=0) # error of each LP, shape=(nobs, nchips)
+    err_each_obs = err_LP.mean(axis=1) # error of each obs, shape=(nobs)
+    err_observation_1d = np.tile(err_each_obs[:, np.newaxis], (1,nk)).ravel() # look like a step function over different times
+
+    ### Prepare data for DIME
+    modIP = 1. - np.concatenate((np.zeros(300), mean_profile, np.zeros(300)))
+    modDV = - np.arange(np.floor(-modIP.size/2.+.5), np.floor(modIP.size/2.+.5)) * dbeta * const.c / 1e3
+    modelfunc = interpolate.UnivariateSpline(modDV[::-1], modIP[::-1], k=1., s=0.) # function that returns the intrinsic profile
+    dv = -dbeta * np.arange(np.floor(-nk/2.+.5), np.floor(nk/2.+.5)) * const.c / 1e3 # km/s
+
+    ### Reconstruct map
+
+    # initialize Doppler map object
+    inc_ = (90 - inc) * np.pi / 180 # IC14 defined 0 <-> equator-on, pi/2 <-> face-on
+    if eqarea:
+        mmap = ELL_map.Map(nlat=nlat, nlon=nlon, type='eqarea', inc=inc_, verbose=True)
+    else:
+        mmap = ELL_map.Map(nlat=nlat, nlon=nlon, inc=inc_) #ELL_map.map returns a class object
+    if plot_cells:
+        mmap.plot_map_cells()
+    ncell = mmap.ncell
+    nx = ncell
+    flatguess = 100*np.ones(nx)
+    bounds = [(1e-6, 300)]*nx
+    allfits = []
+
+    # Compute R matrix
+    Rmatrix = np.zeros((ncell, nobs*dv.size), dtype=np.float32)
+    uncovered = list(range(ncell))
+    for kk, rot in enumerate(phases):
+        speccube = np.zeros((ncell, dv.size), dtype=np.float32) 
+        if eqarea:
+            this_map = ELL_map.Map(nlat=nlat, nlon=nlon, type='eqarea', inc=inc_, deltaphi=-rot)
+        else:
+            this_map = ELL_map.Map(nlat=nlat, nlon=nlon, inc=inc_, deltaphi=-rot)
+        this_doppler = 1. + vsini*this_map.visible_rvcorners.mean(1)/const.c/np.cos(inc_) # mean rv of each cell in m/s
+        good = (this_map.projected_area>0) * np.isfinite(this_doppler)    
+        for ii in good.nonzero()[0]:
+            if ii in uncovered:
+                uncovered.remove(ii) # remove cells that are visible at this rot
+            speccube[ii,:] = modelfunc(dv + (this_doppler[ii]-1)*const.c/1000.)
+        limbdarkening = (1. - LLD) + LLD * this_map.mu
+        Rblock = speccube * ((limbdarkening*this_map.projected_area).reshape(this_map.ncell, 1)*np.pi/this_map.projected_area.sum())
+        Rmatrix[:,dv.size*kk:dv.size*(kk+1)] = Rblock
+
+    dime = MaxEntropy(alpha, nk, nobs)
+    flatmodel = dime.normalize_model(np.dot(flatguess, Rmatrix))
+    flatmodel_2d = np.reshape(flatmodel, (nobs, nk))
+    
+    # create diff+flat profile
+    nchip = obskerns_norm.shape[1]
+    uniform_profiles = np.zeros((nchip, nk))
+    for c in range(nchip):
+        uniform_profiles[c] = obskerns_norm[:,c].mean(axis=0) # time-avged LP for each chip
+    mean_dev = np.median(np.array([obskerns_norm[:,c]-uniform_profiles[c] for c in range(nchip)]), axis=0) # mean over chips
+    new_observation_2d = mean_dev + flatmodel_2d
+    new_observation_1d = new_observation_2d.ravel()
+
+    # Properly scale measurement weights:
+    # Mask out non-surface velocity space with weight=0
+    width = int(vsini/1e3/np.abs(np.diff(dv).mean())) + 15 # vsini edge plus uncert=3
+    central_indices = np.arange(nobs) * nk + int(nk/2)
+    mask = np.zeros_like(observation_1d, dtype=bool)
+    for central_idx in central_indices:
+        mask[central_idx - width:central_idx + width + 1] = True
+    w_observation = (mask==True).astype(float) / err_observation_1d**2
+
+    if create_obs_from_diff:
+        observation_1d = new_observation_1d
+
+    # Scale the observations to match the model's equivalent width:
+    out, eout = an.lsq((observation_1d, np.ones(nobs*nk)), flatmodel, w=w_observation)
+    sc_observation_1d = observation_1d * out[0] + out[1]
+
+    ### Solve!
+    dime.set_data(sc_observation_1d, w_observation, Rmatrix)
+    bfit = an.gfit(dime.entropy_map_norm_sp, flatguess, fprime=dime.getgrad_norm_sp, args=(), ftol=ftol, disp=1, maxiter=1e4, bounds=bounds)
+    allfits.append(bfit)
+    bestparams = bfit[0]
+    model_observation = dime.normalize_model(np.dot(bestparams, Rmatrix))
+    metric, chisq, entropy = dime.entropy_map_norm_sp(bestparams, retvals=True)
+    print("metric:", metric, "chisq:", chisq, "entropy:", entropy)
+
+    bestparams[uncovered] = np.nan # set completely uncovered cells to nan
+
+    # reshape into grid
+    if eqarea:
+        # reshape into list
+        start=0
+        bestparamlist = []
+        for m in range(this_map.nlat):
+            bestparamlist.append(bestparams[start:start+this_map.nlon[m]])
+            start = start + this_map.nlon[m]
+        # interp into rectangular array
+        max_length = max([len(x) for x in bestparamlist])
+        stretched_arrays = []
+        for array in bestparamlist:
+            x_old = np.arange(len(array))
+            x_new = np.linspace(0, len(array) - 1, max_length)
+            y_new = np.interp(x_new, x_old, array)
+            stretched_arrays.append(y_new)
+
+        bestparamgrid = np.vstack(stretched_arrays)
+
+        if plot_unstretched_map:
+            # pad into rectangular array
+            padded_arrays = []
+            for array in bestparamlist:
+                left_pad = int((max_length - len(array)) / 2)
+                right_pad = max_length - len(array) - left_pad
+                padded_array = np.pad(array, (left_pad, right_pad), 'constant')
+                padded_arrays.append(padded_array)
+                array_2d = np.vstack(padded_arrays)
+                plt.imshow(array_2d, cmap='plasma')
+                #plt.show()
+
+    else:
+        bestparamgrid = np.reshape(bestparams, (-1, nlon))
+
+    res = dict(
+        bestparams=bestparams,
+        bestparamgrid=bestparamgrid, 
+        Q=metric, chisq=chisq, entropy=entropy,
+        Rmatrix=Rmatrix,
+        model_observation=model_observation,
+        sc_observation_1d=sc_observation_1d,
+        w_observation=w_observation,
+        flatmodel=flatmodel,
+        flineSpline=modelfunc,
+        mmap=mmap, dv=dv, dbeta=dbeta
+    )
+        
+    return bestparamgrid, res
+
+def plot_IC14_map(bestparamgrid, colorbar=False, clevel=5, sigma=1, vmax=None, vmin=None, cmap=plt.cm.plasma):
+    '''Plot doppler map from an array.'''
+    cmap = plt.cm.plasma.copy()
+    cmap.set_bad('gray', 1)
+    fig = plt.figure(figsize=(5,3))
+    ax = fig.add_subplot(111, projection='mollweide')
+    lon = np.linspace(-np.pi, np.pi, bestparamgrid.shape[1])
+    lat = np.linspace(-np.pi/2., np.pi/2., bestparamgrid.shape[0])
+    Lon, Lat = np.meshgrid(lon,lat)
+    if vmax is None:
+        im = ax.pcolormesh(Lon, Lat, bestparamgrid, cmap=cmap, shading='gouraud')
+    else:
+        im = ax.pcolormesh(Lon, Lat, bestparamgrid, cmap=cmap, shading='gouraud', vmin=vmin, vmax=vmax)
+    #contour = ax.contour(Lon, Lat, gaussian_filter(bestparamgrid, sigma), clevel, colors='white', linewidths=0.5)
+    if colorbar:
+        fig.colorbar(im, fraction=0.065, pad=0.2, orientation="horizontal", label="%")
+    yticks = np.linspace(-np.pi/2, np.pi/2, 7)[1:-1]
+    xticks = np.linspace(-np.pi, np.pi, 13)[1:-1]
+    ax.set_yticks(yticks, labels=[f'{deg:.0f}˚' for deg in yticks*180/np.pi], fontsize=7, alpha=0.5)
+    ax.set_xticks(xticks, labels=[f'{deg:.0f}˚' for deg in xticks*180/np.pi], fontsize=7, alpha=0.5)
+    ax.grid('major', color='k', linewidth=0.25)
+    for item in ax.spines.values():
+        item.set_linewidth(1.2)
