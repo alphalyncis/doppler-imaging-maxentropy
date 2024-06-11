@@ -22,7 +22,7 @@ import emcee
 
 import modelfitting as an # for an.lsq and an.gfit
 import ELL_map_class as ELL_map
-import dime as dime # Doppler Imaging & Maximum Entropy, needed for various funcs
+from dime import MaxEntropy # Doppler Imaging & Maximum Entropy, needed for various funcs
 import cartopy.crs as ccrs
 from PIL import Image
 
@@ -1161,7 +1161,6 @@ def solve_DIME(
         plot_map_cells(mmap)
     ncell = mmap.ncell
     nx = ncell
-    dime.setup(observation_1d.size, nk)
     flatguess = 100*np.ones(nx)
     bounds = [(1e-6, 300)]*nx
     allfits = []
@@ -1185,9 +1184,10 @@ def solve_DIME(
         Rblock = speccube * ((limbdarkening*this_map.projected_area).reshape(this_map.ncell, 1)*np.pi/this_map.projected_area.sum())
         Rmatrix[:,dv.size*kk:dv.size*(kk+1)] = Rblock
 
-    flatmodel = dime.normalize_model(np.dot(flatguess, Rmatrix), nk)
+    dime = MaxEntropy(alpha, nk, nobs)
+    flatmodel = dime.normalize_model(np.dot(flatguess, Rmatrix))
     flatmodel_2d = np.reshape(flatmodel, (nobs, nk))
-
+    
     # create diff+flat profile
     nchip = obskerns_norm.shape[1]
     uniform_profiles = np.zeros((nchip, nk))
@@ -1198,9 +1198,6 @@ def solve_DIME(
     new_observation_1d = new_observation_2d.ravel()
 
     if len(allfits)==0:  # Properly scale measurement weights:
-        #minfm = flatmodel.min()
-        #cutoffval = 1. - (1. - minfm) / 22.
-
         # Mask out non-surface velocity space with weight=0
         width = int(vsini/1e3/np.abs(np.diff(dv).mean())) + 15 # vsini edge plus uncert=3
         central_indices = np.arange(nobs) * nk + int(nk/2)
@@ -1215,13 +1212,6 @@ def solve_DIME(
         # Scale the observations to match the model's equivalent width:
         out, eout = an.lsq((observation_1d, np.ones(nobs*nk)), flatmodel, w=w_observation)
         sc_observation_1d = observation_1d * out[0] + out[1]
-
-        # perfect fit is when alpha=0 i.e. no smoothing
-        #fitargs = (sc_observation_1d, w_observation, Rmatrix, 0)
-        #perfect_fit = an.gfit(dime.entropy_map_norm_sp, flatguess, fprime=dime.getgrad_norm_sp, args=fitargs, ftol=ftol, maxiter=1e4, bounds=bounds)
-        # the metric to be minimized is (0.5*chisq - alpha*entropy)
-        #perfect_model = dime.normalize_model(np.dot(perfect_fit[0], Rmatrix), nk)
-        #w_observation /=  w_observation.max() * (sc_observation_1d - perfect_model)[w_observation>0].std()**2
 
     cc = None
     sampler = None
@@ -1297,12 +1287,12 @@ def solve_DIME(
         plt.imshow(spotmap, origin="lower", extent=(0, 360, -90, 90))
         
     ### Solve!
-    fitargs = (sc_observation_1d, w_observation, Rmatrix, alpha)
-    bfit = an.gfit(dime.entropy_map_norm_sp, flatguess, fprime=dime.getgrad_norm_sp, args=fitargs, ftol=ftol, disp=1, maxiter=1e4, bounds=bounds)
+    dime.set_data(sc_observation_1d, w_observation, Rmatrix)
+    bfit = an.gfit(dime.entropy_map_norm_sp, flatguess, fprime=dime.getgrad_norm_sp, args=(), ftol=ftol, disp=1, maxiter=1e4, bounds=bounds)
     allfits.append(bfit)
     bestparams = bfit[0]
-    model_observation = dime.normalize_model(np.dot(bestparams, Rmatrix), nk)
-    metric, chisq, entropy = dime.entropy_map_norm_sp(bestparams, *fitargs, retvals=True)
+    model_observation = dime.normalize_model(np.dot(bestparams, Rmatrix))
+    metric, chisq, entropy = dime.entropy_map_norm_sp(bestparams, retvals=True)
     print("metric:", metric, "chisq:", chisq, "entropy:", entropy)
 
     bestparams[uncovered] = np.nan # set completely uncovered cells to nan

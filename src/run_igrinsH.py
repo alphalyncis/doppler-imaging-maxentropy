@@ -14,7 +14,7 @@ savedir = "igrinsH"
 band = "H"
 nk = 125
 alpha = 2000
-#goodchips_run[instru][target][band] = [0,1,2,3,4,5,16,17,18,19]
+#goodchips_run[instru][target][band] = [1,2,3,4]
 modelspec = "t1400g1000f8"
 
 
