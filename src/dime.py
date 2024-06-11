@@ -13,6 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import scipy.constants as const
+from scipy.optimize import minimize
 from scipy import interpolate
 from scipy.signal import savgol_filter
 import starry
@@ -62,9 +63,11 @@ class DopplerImaging():
         self.iseqarea = kwargs_IC14['eqarea']
         self.nlat = kwargs_IC14['nlat']
         self.nlon = kwargs_IC14['nlon']
+        self.dime = MaxEntropy(self.alpha, self.nk, self.nobs)
 
         self.obskerns_norm = obskerns_norm
         self.intrinsic_profiles = intrinsic_profiles
+        self.nchip = self.obskerns_norm.shape[1]
 
         ### Set up the intrinsic profile function
         mean_profile = np.median(self.intrinsic_profiles, axis=0) # can safely take means over chips now
@@ -105,6 +108,7 @@ class DopplerImaging():
         ### Set up the R matrix
         self.Rmatrix = np.zeros((self.ncell, self.nobs*self.dv.size), dtype=np.float32)
         self.compute_Rmatrix()
+        self.flatmodel = self.dime.normalize_model(np.dot(self.flatguess, self.Rmatrix))
 
         ### Set up attributes for results
         self.bestparams = None
@@ -112,40 +116,19 @@ class DopplerImaging():
         self.metric = None
         self.chisq = None
         self.entropy = None
-
-    def solve_scipy(self, plot_cells=False):
-        """
-        From IC14 except kerns used to compute weights should take 
-        input from cen_kerns (profiles centered to rv=0).
-        ***inc in degrees (90 <-> equator-on).***
-
-        Returns
-        -------
-        bestparamgrid: 2darray, shape=(nlon, nlat)
-            Optimized surface map. 
-            Cells corresponding to longitude 0~2*pi, latitude 0~pi.
-
-        """
-        from scipy.optimize import minimize
-
-        # minimize
-        res = minimize(self.entropy_map_norm_sp, self.flatguess, method='L-BFGS-B', jac=self.getgrad_norm_sp, options={'ftol':self.ftol})
-        bestparamgrid = res.x.reshape(self.nlon, self.nlat)
-
-        return bestparamgrid
+        self.fitres = None
     
-    def solve(self, create_obs_from_diff=True, maxiter=1e4, ftol=0.01):
+    def solve(self, create_obs_from_diff=True, solver='ic14', maxiter=1e4, ftol=0.01):
         '''Solve the Doppler imaging problem using the Maximum Entropy method.'''
-        dime = MaxEntropy(self.alpha, self.nk, self.nobs)
-        flatmodel = dime.normalize_model(np.dot(self.flatguess, self.Rmatrix))
-        flatmodel_2d = np.reshape(flatmodel, (self.nobs, self.nk))
-
+        
         # create diff+flat profile
-        self.nchip = self.obskerns_norm.shape[1]
         uniform_profiles = np.zeros((self.nchip, self.nk))
         for c in range(self.nchip):
             uniform_profiles[c] = self.obskerns_norm[:,c].mean(axis=0) # time-avged LP for each chip
-        mean_dev = np.median(np.array([self.obskerns_norm[:,c]-uniform_profiles[c] for c in range(self.nchip)]), axis=0) # mean over chips
+        mean_dev = np.median(np.array(
+            [self.obskerns_norm[:,c]-uniform_profiles[c] for c in range(self.nchip)]
+        ), axis=0) # mean over chips
+        flatmodel_2d = np.reshape(self.flatmodel, (self.nobs, self.nk))
         new_observation_2d = mean_dev + flatmodel_2d
         new_observation_1d = new_observation_2d.ravel()
 
@@ -153,17 +136,26 @@ class DopplerImaging():
             self.observed_1d = new_observation_1d
 
         # Scale the observations to match the model's equivalent width:
-        out, eout = mf.lsq((self.observed_1d, np.ones(self.nobs*self.nk)), flatmodel, w=self.weights)
+        out, eout = mf.lsq((self.observed_1d, np.ones(self.nobs*self.nk)), self.flatmodel, w=self.weights)
         self.observed_1d = self.observed_1d * out[0] + out[1]
 
         ### Solve!
-        dime.set_data(self.observed_1d,self.weights, self.Rmatrix)
-        bfit = mf.gfit(dime.entropy_map_norm_sp, self.flatguess, fprime=dime.getgrad_norm_sp, 
-                       args=(), ftol=ftol, disp=1, maxiter=maxiter, bounds=self.bounds)
-        self.bestparams = bfit[0]
-        #model_observation = dime.normalize_model(np.dot(bestparams, self.Rmatrix))
-        self.metric, self.chisq, self.entropy = dime.entropy_map_norm_sp(self.bestparams, retvals=True)
-        print("metric:", self.metric, "chisq:", self.chisq, "entropy:", self.entropy)
+        self.dime.set_data(self.observed_1d,self.weights, self.Rmatrix)
+        
+        if solver == 'ic14':
+            bfit = mf.gfit(self.dime.entropy_map_norm_sp, self.flatguess, fprime=dime.getgrad_norm_sp, 
+                        args=(), ftol=ftol, disp=1, maxiter=maxiter, bounds=self.bounds)
+            self.bestparams = bfit[0]
+            self.fitres = bfit
+
+        elif solver == 'scipy':
+            res = minimize(self.dime.entropy_map_norm_sp, self.flatguess, 
+                              method='L-BFGS-B', jac=self.dime.getgrad_norm_sp, options={'ftol':ftol})
+            self.bestparams = res.x
+            self.fitres = res
+
+        self.metric, self.chisq, self.entropy = self.dime.entropy_map_norm_sp(self.bestparams, retvals=True)
+        print(f"metric: {self.metric:.2f}, chisq: {self.chisq:.2f}, entropy: {self.entropy:.2f}")
 
         self.bestparams[self.uncovered] = np.nan # set completely uncovered cells to nan
         bestparams2d = self.reshape_map_to_grid() # update self.bestparamgrid
@@ -262,11 +254,25 @@ class DopplerImaging():
                 limbdark={self.lld}""",
             fontsize=8)
 
-    def plot_starry(self, ydeg=7, colorbar=False):
+    def plot_starry_map(self, ydeg=7, colorbar=False):
         fig, ax = plt.subplots(figsize=(7,3))
         showmap = starry.Map(ydeg=ydeg)
         showmap.load(self.bestparamgrid_r)
         showmap.show(ax=ax, projection="moll", colorbar=colorbar)
+
+    def plot_fit_results(self):
+        obs_2d = np.reshape(self.observed_1d, (self.nobs, self.nk))
+        model_observation = self.dime.normalize_model(np.dot(self.bestparams, self.Rmatrix))
+        bestmodel_2d = np.reshape(model_observation, (self.nobs, self.nk))
+        flatmodel_2d = np.reshape(self.flatmodel, (self.nobs, self.nk))
+
+        plt.figure(figsize=(5, 7))
+        for i in range(self.nobs):
+            plt.plot(self.dv, obs_2d[i] - 0.02*i, color='k', linewidth=1)
+            #plt.plot(obs[i] - 0.02*i, '.', color='k', markersize=2)
+            plt.plot(self.dv, bestmodel_2d[i] - 0.02*i, color='r', linewidth=1)
+            plt.plot(self.dv, flatmodel_2d[i] - 0.02*i, '--', color='gray', linewidth=1)
+        plt.legend(labels=['obs', 'best-fit map', 'flat map'])
 
 class MaxEntropy():
     """A class for Maximum Entropy computations for Doppler imaging."""

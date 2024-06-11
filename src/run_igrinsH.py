@@ -15,7 +15,7 @@ savedir = "igrinsH"
 band = "H"
 nk = 125
 alpha = 2000
-goodchips_run[instru][target][band] = [2,3,4]
+#goodchips_run[instru][target][band] = [2,3,4]
 modelspec = "t1400g1000f8"
 
 
@@ -107,8 +107,9 @@ intrinsic_profiles, obskerns_norm, dbeta = make_LSD_profile(instru, template, ob
 #bestparamgrid_r, res = solve_IC14new(intrinsic_profiles, obskerns_norm, kwargs_IC14, kwargs_fig, annotate=False, colorbar=False, vmin=85, vmax=110)
 #plot_IC14_map(bestparamgrid_r, colorbar=False, vmin=85, vmax=110)
 mapB_H = DopplerImaging(obskerns_norm, intrinsic_profiles, kwargs_IC14, nk, nobs, dbeta)
-mapB_H.solve(create_obs_from_diff=True)
-mapB_H.plot_IC14_map(colorbar=False, vmin=85, vmax=110)
+mapB_H.solve(create_obs_from_diff=True, solver='scipy', ftol=1e-5)
+mapB_H.plot_IC14_map(colorbar=True, vmin=85, vmax=115)
+mapB_H.plot_fit_results()
 plt.savefig(paths.figures / f"{kwargs_fig['savedir']}/solver1.png", bbox_inches="tight", dpi=100, transparent=True)
 
 
