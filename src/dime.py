@@ -13,7 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import scipy.constants as const
-from scipy.optimize import minimize
+import scipy.optimize as opt
 from scipy import interpolate
 from scipy.signal import savgol_filter
 import starry
@@ -118,50 +118,6 @@ class DopplerImaging():
         self.entropy = None
         self.fitres = None
     
-    def solve(self, create_obs_from_diff=True, solver='ic14', maxiter=1e4, ftol=0.01):
-        '''Solve the Doppler imaging problem using the Maximum Entropy method.'''
-        
-        # create diff+flat profile
-        uniform_profiles = np.zeros((self.nchip, self.nk))
-        for c in range(self.nchip):
-            uniform_profiles[c] = self.obskerns_norm[:,c].mean(axis=0) # time-avged LP for each chip
-        mean_dev = np.median(np.array(
-            [self.obskerns_norm[:,c]-uniform_profiles[c] for c in range(self.nchip)]
-        ), axis=0) # mean over chips
-        flatmodel_2d = np.reshape(self.flatmodel, (self.nobs, self.nk))
-        new_observation_2d = mean_dev + flatmodel_2d
-        new_observation_1d = new_observation_2d.ravel()
-
-        if create_obs_from_diff:
-            self.observed_1d = new_observation_1d
-
-        # Scale the observations to match the model's equivalent width:
-        out, eout = mf.lsq((self.observed_1d, np.ones(self.nobs*self.nk)), self.flatmodel, w=self.weights)
-        self.observed_1d = self.observed_1d * out[0] + out[1]
-
-        ### Solve!
-        self.dime.set_data(self.observed_1d,self.weights, self.Rmatrix)
-        
-        if solver == 'ic14':
-            bfit = mf.gfit(self.dime.entropy_map_norm_sp, self.flatguess, fprime=dime.getgrad_norm_sp, 
-                        args=(), ftol=ftol, disp=1, maxiter=maxiter, bounds=self.bounds)
-            self.bestparams = bfit[0]
-            self.fitres = bfit
-
-        elif solver == 'scipy':
-            res = minimize(self.dime.entropy_map_norm_sp, self.flatguess, 
-                              method='L-BFGS-B', jac=self.dime.getgrad_norm_sp, options={'ftol':ftol})
-            self.bestparams = res.x
-            self.fitres = res
-
-        self.metric, self.chisq, self.entropy = self.dime.entropy_map_norm_sp(self.bestparams, retvals=True)
-        print(f"metric: {self.metric:.2f}, chisq: {self.chisq:.2f}, entropy: {self.entropy:.2f}")
-
-        self.bestparams[self.uncovered] = np.nan # set completely uncovered cells to nan
-        bestparams2d = self.reshape_map_to_grid() # update self.bestparamgrid
-        self.bestparamgrid = np.roll(np.flip(bestparams2d, axis=1), 
-                                       int(0.5*bestparams2d.shape[1]), axis=1)
-
     def compute_Rmatrix(self):
         """
         Compute the R matrix for the inversion.
@@ -181,6 +137,59 @@ class DopplerImaging():
             limbdarkening = (1. - self.lld) + self.lld * this_map.mu
             Rblock = speccube * ((limbdarkening*this_map.projected_area).reshape(this_map.ncell, 1)*np.pi/this_map.projected_area.sum())
             self.Rmatrix[:, self.dv.size*kk:self.dv.size*(kk+1)] = Rblock
+
+    def solve(self, create_obs_from_diff=True, scaler='scipy', solver='ic14', maxiter=1e4, ftol=0.01):
+        '''Solve the Doppler imaging problem using the Maximum Entropy method.'''
+        
+        # create diff+flat profile
+        uniform_profiles = np.zeros((self.nchip, self.nk))
+        for c in range(self.nchip):
+            uniform_profiles[c] = self.obskerns_norm[:,c].mean(axis=0) # time-avged LP for each chip
+        mean_dev = np.median(np.array(
+            [self.obskerns_norm[:,c]-uniform_profiles[c] for c in range(self.nchip)]
+        ), axis=0) # mean over chips
+        flatmodel_2d = np.reshape(self.flatmodel, (self.nobs, self.nk))
+        new_observation_2d = mean_dev + flatmodel_2d
+        new_observation_1d = new_observation_2d.ravel()
+
+        if create_obs_from_diff:
+            self.observed_1d = new_observation_1d
+
+        # Scale the observations to match the model's linear trend and offset:
+        if scaler == 'ic14':
+            x_0 = self.observed_1d
+            x_1 = np.ones(self.nobs * self.nk)
+            out, eout = mf.lsq(x=(x_0, x_1), z=self.flatmodel, w=self.weights)
+            self.observed_1d = x_0 * out[0] + x_1 * out[1]
+
+        elif scaler == 'scipy':
+            linfunc = lambda x, a, b: x * a + b
+            coeff, cov = opt.curve_fit(linfunc, self.observed_1d, self.flatmodel, 
+                                       sigma=self.weights, absolute_sigma=True, p0=[1, 0])
+            self.observed_1d = linfunc(self.observed_1d, *coeff)
+
+        ### Solve!
+        self.dime.set_data(self.observed_1d, self.weights, self.Rmatrix)
+        
+        if solver == 'ic14':
+            bfit = mf.gfit(self.dime.entropy_map_norm_sp, self.flatguess, fprime=self.dime.getgrad_norm_sp, 
+                        args=(), ftol=ftol, disp=1, maxiter=maxiter, bounds=self.bounds)
+            self.bestparams = bfit[0]
+            self.fitres = bfit
+
+        elif solver == 'scipy':
+            res = opt.minimize(self.dime.entropy_map_norm_sp, self.flatguess, 
+                              method='L-BFGS-B', jac=self.dime.getgrad_norm_sp, options={'ftol':ftol})
+            self.bestparams = res.x
+            self.fitres = res
+
+        self.metric, self.chisq, self.entropy = self.dime.entropy_map_norm_sp(self.bestparams, retvals=True)
+        print(f"metric: {self.metric:.2f}, chisq: {self.chisq:.2f}, entropy: {self.entropy:.2f}")
+
+        self.bestparams[self.uncovered] = np.nan # set completely uncovered cells to nan
+        bestparams2d = self.reshape_map_to_grid() # update self.bestparamgrid
+        self.bestparamgrid = np.roll(np.flip(bestparams2d, axis=1), 
+                                       int(0.5*bestparams2d.shape[1]), axis=1)
 
     def reshape_map_to_grid(self, plot_unstretched_map=False):
         '''Reshape a 1D map to a 2D grid.

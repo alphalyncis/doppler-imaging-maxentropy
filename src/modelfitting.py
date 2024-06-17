@@ -658,16 +658,6 @@ def lsq(x, z, w=None, xerr=None, zerr=None, retcov=False, checkvals=True):
     #    from numpy import vstack, dot, sqrt, isfinite,diag,ones,float, array, ndarray
     #    from numpy.linalg import pinv
 
-    
-    fitxy = False
-    if xerr is None and zerr is not None:
-        w = 1./np.array(zerr)**2
-    elif xerr is not None and zerr is not None:
-        fitxy = True
-        xerr = putvecsinarray(xerr)
-        zerr = putvecsinarray(zerr)
-
-
     if isinstance(x,tuple) or isinstance(x,list):
         Xmat = np.vstack(x).transpose()
     elif isinstance(x, np.ndarray) and x.ndim < 2:
@@ -687,45 +677,16 @@ def lsq(x, z, w=None, xerr=None, zerr=None, retcov=False, checkvals=True):
     if checkvals:
         goodind = np.isfinite(Xmat.sum(1))*np.isfinite(z)*np.isfinite(np.diag(w))
 
-    nelem, nvec = Xmat.shape    
-    def linear_lsq_model(p, Xmatvec):
-        Xmat0 = Xmatvec.reshape(nelem, nvec)
-        return np.tile(np.dot(Xmat0, p), nvec)
-
-    if fitxy:
-        # Create a model for fitting.
-        lsq_model = odr.Model(linear_lsq_model)
-
-        tileZflat = np.tile(z, nvec)
-        tilegoodind = np.tile(goodind, nvec)
-        etileZflat = np.tile(zerr, nvec)
-        etileZflat[nelem:] *= ((etileZflat.max())*1e9)
-        # Create a RealData object using our initiated data from above.
-        if checkvals:
-            data = odr.RealData(Xmat.flatten()[tilegoodind], tileZflat[tilegoodind], sx=xerr.flatten()[tilegoodind], sy=etileZflat[tilegoodind])
-        else:
-            data = odr.RealData(Xmat.flatten(), tileZflat, sx=xerr.flatten(), sy=etileZflat)
-
-        guess, eguess = lsq(Xmat[goodind], z, checkvals=checkvals)
-        
-        # Set up ODR with the model and data.
-        odr = odr.ODR(data, lsq_model, beta0=guess)
-
-        # Run the regression.
-        out = odr.run()
-        fitcoef, covmat = out.beta, out.cov_beta
-
+    if checkvals:
+        Wmat = w[goodind][:,goodind]
+        XtW = np.dot(Xmat[goodind,:].transpose(),Wmat)
+        fitcoef = np.dot(np.dot(np.linalg.pinv(np.dot(XtW,Xmat[goodind,:])),XtW), z[goodind])
+        covmat = (np.linalg.pinv(np.dot(XtW, Xmat[goodind,:])))
     else:
-        if checkvals:
-            Wmat = w[goodind][:,goodind]
-            XtW = np.dot(Xmat[goodind,:].transpose(),Wmat)
-            fitcoef = np.dot(np.dot(np.linalg.pinv(np.dot(XtW,Xmat[goodind,:])),XtW), z[goodind])
-            covmat = (np.linalg.pinv(np.dot(XtW, Xmat[goodind,:])))
-        else:
-            Wmat = w
-            XtW = np.dot(Xmat.transpose(),Wmat)
-            fitcoef = np.dot(np.dot(np.linalg.pinv(np.dot(XtW,Xmat)),XtW), z)
-            covmat = (np.linalg.pinv(np.dot(XtW, Xmat)))
+        Wmat = w
+        XtW = np.dot(Xmat.transpose(),Wmat)
+        fitcoef = np.dot(np.dot(np.linalg.pinv(np.dot(XtW,Xmat)),XtW), z)
+        covmat = (np.linalg.pinv(np.dot(XtW, Xmat)))
 
 
     efitcoef = np.sqrt(np.diag(covmat))
