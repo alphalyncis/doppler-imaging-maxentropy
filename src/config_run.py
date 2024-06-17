@@ -17,6 +17,8 @@ OPTIONS = {
     "LSD": ["new", "orig", None]
 }
 
+npixs = {"IGRINS": 1848, "CRIRES": 1024}
+
 goodchips_run = {
     "IGRINS": {
         "W1049B":{

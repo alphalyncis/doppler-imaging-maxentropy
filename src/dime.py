@@ -1,25 +1,27 @@
-"""
-# Original author: Ian Crossfield (Python 2.7)
-
-Handy Routines for Doppler Imaging and Maximum-Entropy.
-"""
-
 ######################################################
-# 06-2024 Xueqing Chen: change to class structure
+# Doppler Imaging and Maximum-Entropy
+
+# Original author: Ian Crossfield (Python 2.7) 
 # 02-2020 Emma Bubb: change to run on Python 3
+# 06-2024 Xueqing Chen: change to class structure
 ######################################################
 
 import numpy as np
 import matplotlib.pyplot as plt
+import paths
 
 import scipy.constants as const
 import scipy.optimize as opt
 from scipy import interpolate
 from scipy.signal import savgol_filter
+
+from astropy.io import fits
 import starry
 
+import lsd_utils as lsd
 import ELL_map_class as ELL_map
 import modelfitting as mf
+from config_run import npixs
 
 class DopplerImaging():
     """A class for Doppler Imaging routines.
@@ -47,14 +49,45 @@ class DopplerImaging():
         Inclination of star in degrees (common definition, 90 is equator-on)
     """
 
-    def __init__(self, obskerns_norm, intrinsic_profiles, kwargs_IC14,
+    def __init__(self, instru, obskerns_norm, intrinsic_profiles, kwargs_IC14,
                 nk, nobs, dbeta):
-        # settings
-        self.alpha = kwargs_IC14['alpha']
-        self.nk = nk
+        ### General parameters ###
         self.nobs = nobs
-        self.dbeta = dbeta
-        self.dv = -self.dbeta * np.arange(np.floor(-self.nk/2.+.5), np.floor(self.nk/2.+.5)) * const.c / 1e3 # km/s
+        self.goodchips = kwargs_fig['goodchips']
+        self.nchip = len(self.goodchips)
+        self.npix0 = npixs[instru]
+        self.pad = 100
+        self.npix = self.npix0 - 2 * self.pad
+        self.nk = nk
+        print(f"nobs: {self.nobs}, nchip: {self.nchip}, npix: {self.npix}")
+
+        ### Wavelegnth parameters ###
+        self.wav0_nm = np.zeros((self.nchip, self.npix0))
+        self.wav_nm = np.zeros((self.nchip, self.npix))
+        self.wav_angs = np.array(self.wav_nm) * 10 # from nm to angstroms
+        self.dbeta = np.diff(self.wav_angs).mean()/self.wav_angs.mean()
+        self.dv = np.arange(np.floor(-self.nk/2.+0.5), np.floor(self.nk/2.+0.5)) \
+            * - self.dbeta * const.c * 1e-3  # velocity grid in km/s
+
+        ### Spectrum and LSD parameters ###
+        self.observed = np.empty((self.nobs, self.nchip, self.npix), dtype=float)
+        self.template = np.empty_like(self.observed)
+        self.residual = np.empty_like(self.observed)
+        self.error    = np.empty_like(self.observed)
+        self.mean_spectrum = np.empty((self.nchip, self.npix0))
+        #self.flux_err = np.empty((), dtype=float)
+        self.err_LSD_profiles = np.empty((), dtype=float)
+
+        self.deltaspecs = np.zeros((self.nobs, self.nchip, self.npix), dtype=float)
+        self.kerns = np.zeros((self.nobs, self.nchip, self.nk), dtype=float)
+        self.modkerns = np.zeros((self.nobs, self.nchip, self.nk), dtype=float)
+        #self.make_lsd_profile(line_file, cont_file)
+
+        self.obskerns_norm = np.zeros_like(self.kerns)
+        self.intrinsic_profiles = np.zeros((self.nchip, self.nk), dtype=float) # is avg modkerns over time
+
+        ### Max entropy inversion parameters ###
+        self.alpha = kwargs_IC14['alpha']
         self.phases = kwargs_IC14['phases']
         self.inc = kwargs_IC14['inc']
         self.inc_ = (90 - self.inc) * np.pi / 180 # IC14 defined 0 <-> equator-on, pi/2 <-> face-on
@@ -65,14 +98,10 @@ class DopplerImaging():
         self.nlon = kwargs_IC14['nlon']
         self.dime = MaxEntropy(self.alpha, self.nk, self.nobs)
 
-        self.obskerns_norm = obskerns_norm
-        self.intrinsic_profiles = intrinsic_profiles
-        self.nchip = self.obskerns_norm.shape[1]
-
         ### Set up the intrinsic profile function
         mean_profile = np.median(self.intrinsic_profiles, axis=0) # can safely take means over chips now
         modIP = 1. - np.concatenate((np.zeros(300), mean_profile, np.zeros(300)))
-        modDV = - np.arange(np.floor(-modIP.size/2.+.5), np.floor(modIP.size/2.+.5)) * self.dbeta * const.c / 1e3
+        modDV = - np.arange(np.floor(-modIP.size/2.+.5), np.floor(modIP.size/2.+.5)) * self.dbeta * const.c * 1e-3
         self.modelfunc = interpolate.UnivariateSpline(modDV[::-1], modIP[::-1], k=1., s=0.) # function that returns the intrinsic profile
 
         ### Set up observed data and weights
@@ -117,7 +146,41 @@ class DopplerImaging():
         self.chisq = None
         self.entropy = None
         self.fitres = None
+
+    def make_lsd_profile(self, line_file, cont_file, modname='t1500g1000f8', plot_deltaspec=False):
+        '''Calculate the LSD profile for a given spectrum.'''
+        # Read daospec linelist
+        lineloc, lineew, _ = dao_getlines(line_file)
+        pspec_cont = fits.getdata(cont_file)
+        hdr_pspec_cont = fits.getheader(cont_file)
+        wspec = hdr_pspec_cont['crval1'] + np.arange(pspec_cont.size)*hdr_pspec_cont['cdelt1']
+        factor = 1e11 if "t1" in modname else 1e5 # don't know why different model needs scaling with a factor
+        pspec_cont = pspec_cont/factor
+        spline = interpolate.UnivariateSpline(wspec, pspec_cont, s=0.0, k=1.0) #interpolate over the continuum measurement
+        
+        # Calculate the LSD profile
+        for i, jj in enumerate(self.goodchips): 
+            print("chip", jj)
+            for kk in range(self.nobs):
+                shift = 1. + self.rv  # best rv shift for Callie is 9e-5
+                deltaspec = lsd.make_deltaspec(
+                    lineloc*shift, lineew, self.wav_angs[i], verbose=False, cont=spline(self.wav_angs[i]))
+                _, self.kerns[kk,i] ,_ ,_ = lsd.dsa(deltaspec, self.observed[kk,i], self.nk)
+                _, self.modkerns[kk,i],_ ,_ = lsd.dsa(deltaspec, self.template[kk,i,self.pad:-self.pad], self.nk) 
+                self.deltaspecs[kk,i] = deltaspec
+        self.err_LSD_profiles = np.median(self.kerns.mean(1).std(0))
+
+        if plot_deltaspec:
+            self.plot_lsd_specta()
+
+        # Shift kerns to center
+        self.modkerns, self.kerns = self.shift_kerns_to_center(shiftkerns=False)
     
+        # Normalize kerns
+        self.obskerns_norm = self.cont_normalize_kerns()
+
+        self.intrinsic_profiles = np.array([self.modkerns[:,i].mean(0) for i in range(self.nchip)])
+
     def compute_Rmatrix(self):
         """
         Compute the R matrix for the inversion.
@@ -221,6 +284,56 @@ class DopplerImaging():
             bestparams2d = np.reshape(self.bestparams, (-1, self.nlon))
 
         return bestparams2d
+
+    def shift_kerns_to_center(self, sim=False, shiftkerns=True, verbose=False):
+        '''shift modkerns to center at dv=0 and shift kerns for same amount.'''
+        cen_modkerns = np.zeros_like(self.modkerns)
+        cen_kerns = np.copy(self.kerns)
+        for i,jj in enumerate(self.goodchips):
+            for k in range(self.nobs):
+                # find systematic rv offset from modkerns
+                systematic_rv_offset = (self.modkerns[k,i]==self.modkerns[k,i].max()).nonzero()[0][0] - (self.dv==0).nonzero()[0][0]
+                # shift modkerns to center at dv=0
+                cen_modkerns[k,i] = np.interp(np.arange(self.nk), np.arange(self.nk) - systematic_rv_offset, self.modkerns[k,i])
+                if verbose:
+                    if (k == 0) and verbose:
+                        print("modkerns shifted to center.")
+                # shift kerns with same amount, if not sim or crires
+                if shiftkerns and (not sim) and (self.instru != 'CRIRES'): 
+                    cen_kerns[k,i] = np.interp(np.arange(self.nk), np.arange(self.nk) - systematic_rv_offset, self.kerns[k,i])
+                    if (k == 0) and verbose:
+                        print("kerns shifted to same amount.")
+
+                if verbose:
+                    print("chip:", jj , "obs:", k, "offset:", systematic_rv_offset)
+        return cen_modkerns, cen_kerns
+
+    def cont_normalize_kerns(self):
+        '''Continuum-normalize kerns by fitting a line at the flat edges of kern.'''
+        obskerns = 1. - self.kerns
+        obskerns_norm = np.zeros_like(obskerns)
+        continuumfit = np.zeros((self.nobs, self.nchip, 2))
+        edgelen = 15 if self.instru != "CRIRES" else 7
+        for i in range(self.nchip):
+            for n in range(self.nobs):
+                inds = np.concatenate((np.arange(0, edgelen), np.arange(self.nk - edgelen, self.nk)))
+                continuumfit[n,i] = np.polyfit(inds, obskerns[n,i,inds], 1)
+                obskerns_norm[n,i] = obskerns[n,i] / np.polyval(continuumfit[n,i], np.arange(self.nk))
+        return obskerns_norm
+
+    def plot_lsd_specta(self, t=0):
+        plt.figure(figsize=(15, 2*self.nchip))
+        for i, jj in enumerate(self.goodchips):
+            plt.subplot(self.nchip, 1, i+1)
+            plt.plot(self.wav_angs[i], self.deltaspecs[t,i], linewidth=0.5, color='C0', label="deltaspec")
+            plt.plot(self.wav_angs[i], self.template[t,i], linewidth=0.6, color='C1', label="template")
+            plt.plot(self.wav_angs[i], self.observed[t,i], linewidth=0.6, color='k', label="observed")
+            plt.text(x=self.wav_angs[i].min()-10, y=0, s=f"order={jj}")
+            if i==0:
+                plt.title(f"model vs. lines at t={t}")
+        plt.legend(loc=4, fontsize=9)
+        plt.savefig(paths.output / "LSD_deltaspecs.png", transparent=True)
+
 
     def plot_IC14_map(self, colorbar=False, clevel=5, sigma=1, vmax=None, vmin=None, cmap=plt.cm.plasma, annotate=False):
         '''Plot doppler map from an array.'''
@@ -348,3 +461,31 @@ class MaxEntropy():
             return metric, chisq, entropy
         else:
             return metric
+        
+
+######################################################
+##### utils ##########################################
+######################################################
+def dao_getlines(f_linelist):
+    """
+    Read the line locations and equivalent widths from a DAOSPEC output file.
+
+    Example:
+      f_linelist = 'model_spec.clines'
+      (lineloc, lineew, linespec) = getlines(f_linelist)
+    """
+    #2009-02-22 10:15 IJC: Initiated
+
+    # Get the line locations and EWs:
+    with open(f_linelist, 'r') as f:
+        raw = f.readlines()
+
+    dat = np.zeros([len(raw), 2], dtype=float)                                                 
+    for i, line in enumerate(raw):                                         
+        dat[i,:]= list(map(float, line.split()[0:2]))
+
+    lineloc = dat[:,0]
+    lineew = dat[:,1]/1e3
+    linespec = [line.split()[-1] for line in raw]
+    return (lineloc, lineew, linespec)
+
