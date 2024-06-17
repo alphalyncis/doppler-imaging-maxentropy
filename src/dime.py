@@ -138,7 +138,7 @@ class DopplerImaging():
             Rblock = speccube * ((limbdarkening*this_map.projected_area).reshape(this_map.ncell, 1)*np.pi/this_map.projected_area.sum())
             self.Rmatrix[:, self.dv.size*kk:self.dv.size*(kk+1)] = Rblock
 
-    def solve(self, create_obs_from_diff=True, scaler='scipy', solver='ic14', maxiter=1e4, ftol=0.01):
+    def solve(self, create_obs_from_diff=True, solver='scipy', maxiter=1e4, ftol=1e-5):
         '''Solve the Doppler imaging problem using the Maximum Entropy method.'''
         
         # create diff+flat profile
@@ -156,22 +156,16 @@ class DopplerImaging():
             self.observed_1d = new_observation_1d
 
         # Scale the observations to match the model's linear trend and offset:
-        if scaler == 'ic14':
-            x_0 = self.observed_1d
-            x_1 = np.ones(self.nobs * self.nk)
-            out, eout = mf.lsq(x=(x_0, x_1), z=self.flatmodel, w=self.weights)
-            self.observed_1d = x_0 * out[0] + x_1 * out[1]
-
-        elif scaler == 'scipy':
-            linfunc = lambda x, a, b: x * a + b
-            coeff, cov = opt.curve_fit(linfunc, self.observed_1d, self.flatmodel, 
-                                       sigma=self.weights, absolute_sigma=True, p0=[1, 0])
-            self.observed_1d = linfunc(self.observed_1d, *coeff)
+        linfunc = lambda x, c0, c1: x * c0 + c1
+        coeff, cov = opt.curve_fit(linfunc, xdata=self.observed_1d, ydata=self.flatmodel, 
+                                    sigma=self.weights, absolute_sigma=True, p0=[1, 0])
+        self.observed_1d = linfunc(self.observed_1d, *coeff)
 
         ### Solve!
         self.dime.set_data(self.observed_1d, self.weights, self.Rmatrix)
         
         if solver == 'ic14':
+            ftol = 0.01
             bfit = mf.gfit(self.dime.entropy_map_norm_sp, self.flatguess, fprime=self.dime.getgrad_norm_sp, 
                         args=(), ftol=ftol, disp=1, maxiter=maxiter, bounds=self.bounds)
             self.bestparams = bfit[0]
