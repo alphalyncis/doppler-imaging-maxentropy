@@ -112,10 +112,9 @@ modelspec = "t1500g1000f8"
 LSD = "new"
 
 ########## IC14 parameters ##########
-nk = 125
-cut = nk - 70
+nk = 125 if instru == "IGRINS" else 203
 LLD = 0.4
-alpha = 5000
+alpha = 2000
 ftol = 0.01 # tolerance for convergence of maximum-entropy
 nstep = 2000
 nlat, nlon = 10, 20
@@ -141,10 +140,6 @@ if True:
     contrast = "real"
     noisetype = "real"
 
-    if instru == "CRIRES":
-        nk = 203
-        cut = nk - 70
-
     nobs = nobss[target]
 
     # set chips to include
@@ -152,10 +147,9 @@ if True:
     nchip = len(goodchips)
 
     # set model files to use
-    if "t1" in modelspec:
-        model_datafile = paths.data / f'{instru}_{target}_{band}_{modelspec}.pickle'
-        pmod = f'linbroad_{modelspec}'
-        rv = rvs[target]
+    model_datafile = paths.data / f'{instru}_{target}_{band}_{modelspec}.pickle'
+    pmod = f'linbroad_{modelspec}'
+    rv = rvs[target]
 
     line_file = paths.data / f'linelists/{pmod}_edited.clineslsd'
     cont_file = paths.data / f'linelists/{pmod}C.fits'
@@ -186,20 +180,15 @@ if True:
     kwargs_run['ydeg'] = ydeg
 
     kwargs_IC14 = dict(
-        phases=phases, 
+        phases=phases,
+        timestamps=timestamp,
         inc=inc, 
-        vsini=vsini, 
+        vsini=vsini,
+        rv=rv,
         LLD=LLD, 
         eqarea=use_eqarea, 
         nlat=nlat, 
         nlon=nlon,
         alpha=alpha,
         ftol=ftol
-    )
-
-    kwargs_fig = dict(
-        goodchips=goodchips,
-        noisetype=noisetype,
-        contrast=contrast,
-        savedir=savedir
     )

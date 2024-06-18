@@ -284,3 +284,26 @@ def deconvolve1d(a, b, extend='nearest'):
     c = np.sum(amat * bmat, axis=1)
         
     return c
+
+def dao_getlines(f_linelist):
+    """
+    Read the line locations and equivalent widths from a DAOSPEC output file.
+
+    Example:
+      f_linelist = 'model_spec.clines'
+      (lineloc, lineew, linespec) = getlines(f_linelist)
+    """
+    #2009-02-22 10:15 IJC: Initiated
+
+    # Get the line locations and EWs:
+    with open(f_linelist, 'r') as f:
+        raw = f.readlines()
+
+    dat = np.zeros([len(raw), 2], dtype=float)                                                 
+    for i, line in enumerate(raw):                                         
+        dat[i,:]= list(map(float, line.split()[0:2]))
+
+    lineloc = dat[:,0]
+    lineew = dat[:,1]/1e3
+    linespec = [line.split()[-1] for line in raw]
+    return (lineloc, lineew, linespec)

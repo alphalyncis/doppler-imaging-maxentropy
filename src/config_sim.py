@@ -190,7 +190,8 @@ if True:
     kwargs_IC14 = dict(
         phases=phases, 
         inc=inc, 
-        vsini=vsini, 
+        vsini=vsini,
+        rv=rv,
         LLD=LLD, 
         eqarea=use_eqarea, 
         nlat=nlat, 

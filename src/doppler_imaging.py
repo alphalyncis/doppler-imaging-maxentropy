@@ -694,132 +694,6 @@ def remove_spike(data, kern_size=10, lim_denom=5):
             data_filt[i] = np.median(seg[int(kern_size/5):-int(kern_size/5)])
     return data_filt
 
-def shift_kerns_to_center(modkerns, kerns, instru, goodchips, dv, sim=False, shiftkerns=False):
-    '''shift modkerns to center at dv=0 and shift kerns for same amount.'''
-    nobs, nchip, nk = modkerns.shape
-    cen_modkerns = np.zeros_like(modkerns)
-    cen_kerns = np.zeros_like(kerns)
-    for i,jj in enumerate(goodchips):
-        for k in range(nobs):
-            systematic_rv_offset = (modkerns[k,i]==modkerns[k,i].max()).nonzero()[0][0] - (dv==0).nonzero()[0][0] # find the rv offset
-            print("chip:", jj , "obs:", k, "offset:", systematic_rv_offset)
-            cen_modkerns[k,i] = np.interp(np.arange(nk), np.arange(nk) - systematic_rv_offset, modkerns[k,i]) # shift ip to center at dv=0
-            if k ==0:
-                print("modkerns shifted to center.")
-            cen_kerns[k,i] = kerns[k,i]
-            if not sim: # shift kerns with same amount if not simulation
-                if instru != 'CRIRES': # don't shift kerns if crires
-                    if shiftkerns:
-                        cen_kerns[k,i] = np.interp(np.arange(nk), np.arange(nk) - systematic_rv_offset, kerns[k,i])
-                        if k ==0:
-                            print("kerns shifted to same amount.")
-    return cen_modkerns, cen_kerns
-
-def cont_normalize_kerns(cen_kerns, instru):
-    '''Continuum-normalize kerns by fitting a line at the flat edges of kern.'''
-    nobs, nchip, nk = cen_kerns.shape
-    obskerns = 1. - cen_kerns
-    obskerns_norm = np.zeros_like(obskerns)
-    continuumfit = np.zeros((nobs, nchip, 2))
-    side = 15 if instru != "CRIRES" else 7
-    for i in range(nchip):
-        for n in range(nobs):
-            inds = np.concatenate((np.arange(0, side), np.arange(nk-side, nk)))
-            continuumfit[n,i] = np.polyfit(inds, obskerns[n,i,inds], 1)
-            obskerns_norm[n,i] = obskerns[n,i] / np.polyval(continuumfit[n,i], np.arange(nk))
-    return obskerns_norm
-
-def plot_kerns_timeseries(kerns, goodchips, dv, gap=0.03, normed=False, intrinsic_profiles=None):
-    '''Plot time series of kerns.'''
-    nobs, nchip, nk = kerns.shape
-    colors = [cm.gnuplot_r(x) for x in np.linspace(0, 1, nobs+4)]
-    plt.figure(figsize=(nchip*3,4))
-    for i, jj in enumerate(goodchips):
-        plt.subplot(1, nchip, i+1)
-        for n in range(nobs):
-            if not normed:
-                plt.plot(dv, 1 - kerns[n,i] - gap*n, color=colors[n])
-            else:
-                plt.plot(dv, kerns[n,i] - gap*n, color=colors[n])
-        if intrinsic_profiles is not None:
-            plt.plot(dv, 1-intrinsic_profiles[i], color='k')
-        plt.title(f"chip={jj}")
-        plt.xlabel("dv")
-    plt.tight_layout()
-
-def plot_chipav_kern_timeseries(obskerns_norm, dv, timestamps, savedir, gap=0.025, cut=17):
-    '''Plot time series of chip-averaged kerns.'''
-    nobs = obskerns_norm.shape[0]
-    colors = [cm.gnuplot_r(x) for x in np.linspace(0, 1, nobs+4)]
-    fig, ax = plt.subplots(figsize=(4, 5))
-    for n in range(nobs):
-        ax.plot(dv[cut:-cut], obskerns_norm.mean(axis=0).mean(axis=0)[cut:-cut] - gap*n, "--", color="gray", alpha=0.5)
-        ax.plot(dv[cut:-cut], obskerns_norm[n].mean(axis=0)[cut:-cut] - gap*n, color=colors[n+1])
-        #plt.text(dv[cut] + 10, 1 - gap/4 - gap*n, f"{timestamps[n]:.1f}h")
-    #plt.plot(dv, 1-intrinsic_profiles.mean(axis=0), color='k', label="intrinsic profile")
-    ax.set_xlabel("velocity (km/s)")
-    ax.set_xticks([-50, -25, 0, 25, 50])
-    ax.set_ylabel("Line intensity")
-    ax2 = ax.twinx()
-    ax2.set_ylim(ax.get_ybound())
-    ax2.set_yticks([1- gap*n for n in range(nobs)], labels=[f"{t:.1f}h" for t in timestamps], fontsize=9)
-    #plt.axvline(x=vsini/1e3, color="k", linestyle="dashed", linewidth=1)
-    #plt.axvline(x=-vsini/1e3, color="k", linestyle="dashed", linewidth=1)
-    #plt.legend(loc=4, bbox_to_anchor=(1,1))
-    plt.savefig(paths.figures / f"{savedir}/tsplot.png", bbox_inches="tight", dpi=300, transparent=True)
-
-def plot_deviation_map(obskerns_norm, goodchips, dv, vsini, timestamps, savedir, meanby="median",colorbar=False, cut=30, lim=0.003):
-    '''Plot deviation map for each chip and mean deviation map'''
-    nobs, nchip, nk = obskerns_norm.shape
-    uniform_profiles = np.zeros((nchip, nk))
-    ratio = 1.3 if nobs < 10 else 0.7 #if nchip != 4 else 0.5
-
-    # plot deviation map for each chip
-    plt.figure(figsize=(nchip*4,3))
-    for i, jj in enumerate(goodchips):
-        uniform_profiles[i] = obskerns_norm[:,i].mean(axis=0) # is each chip's mean kern over epoches
-        plt.subplot(1,nchip,i+1)
-        plt.imshow(obskerns_norm[:,i]-uniform_profiles[i], 
-            extent=(dv.max(), dv.min(), timestamps[-1], 0),
-            aspect=int(ratio*29),
-            cmap='YlOrBr') # positive diff means dark spot
-        plt.xlim(dv.min()+cut, dv.max()-cut),
-        plt.xlabel("velocity (km/s)")
-        plt.ylabel("Elapsed time (h)")
-        plt.title(f"chip={jj}")
-    plt.tight_layout()
-    plt.savefig(paths.figures / f"{savedir}/tvplot_full.png", bbox_inches="tight", dpi=100, transparent=True)
-
-    # plot only the chip-mean map
-    if meanby == "median":
-        mean_dev = np.median(np.array([obskerns_norm[:,i]-uniform_profiles[i] for i in range(nchip)]), axis=0) # mean over chips
-    elif meanby == "median_each":
-        mean_dev = np.median(obskerns_norm, axis=1) - np.median(uniform_profiles,axis=0)
-    elif meanby == "mean":
-        mean_dev = np.mean(np.array([obskerns_norm[:,i]-uniform_profiles[i] for i in range(nchip)]), axis=0) # mean over chips
-    plt.figure(figsize=(5,3))
-    plt.imshow(mean_dev, 
-        extent=(dv.max(), dv.min(), timestamps[-1], 0),
-        aspect=int(ratio* 29),
-        cmap='YlOrBr',
-        vmin=-lim, vmax=lim) # positive diff means dark spot
-    plt.xlim(dv.min()+cut, dv.max()-cut),
-    plt.xlabel("velocity (km/s)", fontsize=8)
-    plt.xticks([-50, -25, 0, 25, 50], fontsize=8)
-    plt.ylabel("Elapsed time (h)", fontsize=8)
-    plt.yticks([0, 1, 2, 3, 4, 5], fontsize=8)
-    plt.vlines(x=vsini/1e3, ymin=0, ymax=timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
-    plt.vlines(x=-vsini/1e3, ymin=0, ymax=timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
-    if colorbar:
-        cb = plt.colorbar(fraction=0.06, pad=0.28, aspect=15, orientation="horizontal", label="%")
-        cb_ticks = cb.ax.get_xticks()
-        cb.ax.set_xticklabels([f"{t*100:.1f}" for t in cb_ticks])
-        cb.ax.tick_params(labelsize=8)
-    #plt.title(f"{meanby} deviation")
-    #plt.text(dv.min()+5, 0.5, f"chips={goodchips}", fontsize=8)
-    plt.tight_layout()
-    plt.savefig(paths.figures / f"{savedir}/tvplot.png", bbox_inches="tight", dpi=150, transparent=True)
-
 def make_gif_map(bestparamgrid, inc, period, savedir, step=15, fps=4, vmax=110):
     fig = plt.figure(figsize=(10,5))
     y, x = bestparamgrid.shape
@@ -1467,5 +1341,129 @@ def dsa(r, i, Nk, **kw):
     else:
         return (m, K, B0, chisq)
 
+def shift_kerns_to_center(modkerns, kerns, instru, goodchips, dv, sim=False, shiftkerns=False):
+    '''shift modkerns to center at dv=0 and shift kerns for same amount.'''
+    nobs, nchip, nk = modkerns.shape
+    cen_modkerns = np.zeros_like(modkerns)
+    cen_kerns = np.zeros_like(kerns)
+    for i,jj in enumerate(goodchips):
+        for k in range(nobs):
+            systematic_rv_offset = (modkerns[k,i]==modkerns[k,i].max()).nonzero()[0][0] - (dv==0).nonzero()[0][0] # find the rv offset
+            print("chip:", jj , "obs:", k, "offset:", systematic_rv_offset)
+            cen_modkerns[k,i] = np.interp(np.arange(nk), np.arange(nk) - systematic_rv_offset, modkerns[k,i]) # shift ip to center at dv=0
+            if k ==0:
+                print("modkerns shifted to center.")
+            cen_kerns[k,i] = kerns[k,i]
+            if not sim: # shift kerns with same amount if not simulation
+                if instru != 'CRIRES': # don't shift kerns if crires
+                    if shiftkerns:
+                        cen_kerns[k,i] = np.interp(np.arange(nk), np.arange(nk) - systematic_rv_offset, kerns[k,i])
+                        if k ==0:
+                            print("kerns shifted to same amount.")
+    return cen_modkerns, cen_kerns
 
+def cont_normalize_kerns(cen_kerns, instru):
+    '''Continuum-normalize kerns by fitting a line at the flat edges of kern.'''
+    nobs, nchip, nk = cen_kerns.shape
+    obskerns = 1. - cen_kerns
+    obskerns_norm = np.zeros_like(obskerns)
+    continuumfit = np.zeros((nobs, nchip, 2))
+    side = 15 if instru != "CRIRES" else 7
+    for i in range(nchip):
+        for n in range(nobs):
+            inds = np.concatenate((np.arange(0, side), np.arange(nk-side, nk)))
+            continuumfit[n,i] = np.polyfit(inds, obskerns[n,i,inds], 1)
+            obskerns_norm[n,i] = obskerns[n,i] / np.polyval(continuumfit[n,i], np.arange(nk))
+    return obskerns_norm
+
+def plot_kerns_timeseries(kerns, goodchips, dv, gap=0.03, normed=False, intrinsic_profiles=None):
+    '''Plot time series of kerns.'''
+    nobs, nchip, nk = kerns.shape
+    colors = [cm.gnuplot_r(x) for x in np.linspace(0, 1, nobs+4)]
+    plt.figure(figsize=(nchip*3,4))
+    for i, jj in enumerate(goodchips):
+        plt.subplot(1, nchip, i+1)
+        for n in range(nobs):
+            if not normed:
+                plt.plot(dv, 1 - kerns[n,i] - gap*n, color=colors[n])
+            else:
+                plt.plot(dv, kerns[n,i] - gap*n, color=colors[n])
+        if intrinsic_profiles is not None:
+            plt.plot(dv, 1-intrinsic_profiles[i], color='k')
+        plt.title(f"chip={jj}")
+        plt.xlabel("dv")
+    plt.tight_layout()
+
+def plot_chipav_kern_timeseries(obskerns_norm, dv, timestamps, savedir, gap=0.025, cut=17):
+    '''Plot time series of chip-averaged kerns.'''
+    nobs = obskerns_norm.shape[0]
+    colors = [cm.gnuplot_r(x) for x in np.linspace(0, 1, nobs+4)]
+    fig, ax = plt.subplots(figsize=(4, 5))
+    for n in range(nobs):
+        ax.plot(dv[cut:-cut], obskerns_norm.mean(axis=0).mean(axis=0)[cut:-cut] - gap*n, "--", color="gray", alpha=0.5)
+        ax.plot(dv[cut:-cut], obskerns_norm[n].mean(axis=0)[cut:-cut] - gap*n, color=colors[n+1])
+        #plt.text(dv[cut] + 10, 1 - gap/4 - gap*n, f"{timestamps[n]:.1f}h")
+    #plt.plot(dv, 1-intrinsic_profiles.mean(axis=0), color='k', label="intrinsic profile")
+    ax.set_xlabel("velocity (km/s)")
+    ax.set_xticks([-50, -25, 0, 25, 50])
+    ax.set_ylabel("Line intensity")
+    ax2 = ax.twinx()
+    ax2.set_ylim(ax.get_ybound())
+    ax2.set_yticks([1- gap*n for n in range(nobs)], labels=[f"{t:.1f}h" for t in timestamps], fontsize=9)
+    #plt.axvline(x=vsini/1e3, color="k", linestyle="dashed", linewidth=1)
+    #plt.axvline(x=-vsini/1e3, color="k", linestyle="dashed", linewidth=1)
+    #plt.legend(loc=4, bbox_to_anchor=(1,1))
+    plt.savefig(paths.figures / f"{savedir}/tsplot.png", bbox_inches="tight", dpi=300, transparent=True)
+
+def plot_deviation_map(obskerns_norm, goodchips, dv, vsini, timestamps, savedir, meanby="median",colorbar=False, cut=30, lim=0.003):
+    '''Plot deviation map for each chip and mean deviation map'''
+    nobs, nchip, nk = obskerns_norm.shape
+    uniform_profiles = np.zeros((nchip, nk))
+    ratio = 1.3 if nobs < 10 else 0.7 #if nchip != 4 else 0.5
+
+    # plot deviation map for each chip
+    plt.figure(figsize=(nchip*4,3))
+    for i, jj in enumerate(goodchips):
+        uniform_profiles[i] = obskerns_norm[:,i].mean(axis=0) # is each chip's mean kern over epoches
+        plt.subplot(1,nchip,i+1)
+        plt.imshow(obskerns_norm[:,i]-uniform_profiles[i], 
+            extent=(dv.max(), dv.min(), timestamps[-1], 0),
+            aspect=int(ratio*29),
+            cmap='YlOrBr') # positive diff means dark spot
+        plt.xlim(dv.min()+cut, dv.max()-cut),
+        plt.xlabel("velocity (km/s)")
+        plt.ylabel("Elapsed time (h)")
+        plt.title(f"chip={jj}")
+    plt.tight_layout()
+    plt.savefig(paths.figures / f"{savedir}/tvplot_full.png", bbox_inches="tight", dpi=100, transparent=True)
+
+    # plot only the chip-mean map
+    if meanby == "median":
+        mean_dev = np.median(np.array([obskerns_norm[:,i]-uniform_profiles[i] for i in range(nchip)]), axis=0) # mean over chips
+    elif meanby == "median_each":
+        mean_dev = np.median(obskerns_norm, axis=1) - np.median(uniform_profiles,axis=0)
+    elif meanby == "mean":
+        mean_dev = np.mean(np.array([obskerns_norm[:,i]-uniform_profiles[i] for i in range(nchip)]), axis=0) # mean over chips
+    plt.figure(figsize=(5,3))
+    plt.imshow(mean_dev, 
+        extent=(dv.max(), dv.min(), timestamps[-1], 0),
+        aspect=int(ratio* 29),
+        cmap='YlOrBr',
+        vmin=-lim, vmax=lim) # positive diff means dark spot
+    plt.xlim(dv.min()+cut, dv.max()-cut),
+    plt.xlabel("velocity (km/s)", fontsize=8)
+    plt.xticks([-50, -25, 0, 25, 50], fontsize=8)
+    plt.ylabel("Elapsed time (h)", fontsize=8)
+    plt.yticks([0, 1, 2, 3, 4, 5], fontsize=8)
+    plt.vlines(x=vsini/1e3, ymin=0, ymax=timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
+    plt.vlines(x=-vsini/1e3, ymin=0, ymax=timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
+    if colorbar:
+        cb = plt.colorbar(fraction=0.06, pad=0.28, aspect=15, orientation="horizontal", label="%")
+        cb_ticks = cb.ax.get_xticks()
+        cb.ax.set_xticklabels([f"{t*100:.1f}" for t in cb_ticks])
+        cb.ax.tick_params(labelsize=8)
+    #plt.title(f"{meanby} deviation")
+    #plt.text(dv.min()+5, 0.5, f"chips={goodchips}", fontsize=8)
+    plt.tight_layout()
+    plt.savefig(paths.figures / f"{savedir}/tvplot.png", bbox_inches="tight", dpi=150, transparent=True)
 
