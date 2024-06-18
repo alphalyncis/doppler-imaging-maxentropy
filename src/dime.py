@@ -35,13 +35,10 @@ class DopplerImaging():
         Instrument name, either "IGRINS" or "CRIRES".
 
     goodchips : list
-        List of good orders to use.
-
-    npix0 : int
-        Number of pixels in the original spectrum.
+        Indices of good orders to use, starting from 0.
 
     npix : int
-        Number of pixels in the trimmed spectrum.
+        Number of pixels in the spectrum.
 
     nchip : int
         Number of orders used in Doppler imaging.
@@ -64,14 +61,11 @@ class DopplerImaging():
     lld : float
         Limb-darkening coefficient.
 
-    wav0_nm : 2darray, shape=(nchip, npix0)
-        Wavelengths of the original spectrum in nm.
-
     wav_nm : 2darray, shape=(nchip, npix)
-        Wavelengths of the trimmed spectrum in nm.
+        Wavelengths of the spectrum in nm.
 
     wav_angs : 2darray, shape=(nchip, npix)
-        Wavelengths of the trimmed spectrum in angstroms.
+        Wavelengths of the spectrum in angstroms.
 
     dbeta : float
         d_lam/lam_ref of the wavelength range that the line profile sits on.
@@ -84,9 +78,6 @@ class DopplerImaging():
 
     template : 3darray, shape=(nobs, nchip, npix)
         The template spectra cube in each epoch and order.
-
-    residual : 3darray, shape=(nobs, nchip, npix)
-        The fit residual cube in each epoch and order.
 
     error : 3darray, shape=(nobs, nchip, npix)
         The error of observed spectra in each epoch and order.
@@ -163,19 +154,17 @@ class DopplerImaging():
 
     """
 
-    def __init__(self, instru, observed, template, residual, error, timestamps, wav0_nm, wav_nm,
-                 goodchips, kwargs_IC14, nk, nobs):
+    def __init__(self, instru, observed, template, error, timestamps, wav_nm,
+                 goodchips, kwargs_IC14):
         #TODO: add types to the attributes
-        
+
         ### General parameters ###
         self.instru = instru
-        self.nobs = nobs
+        self.nobs = len(timestamps)
         self.goodchips = goodchips
         self.nchip = len(self.goodchips)
-        self.npix0 = npixs[instru] # number of pixels in the original spectrum
-        self.pad = 100
-        self.npix = self.npix0 - 2 * self.pad # number of pixels in the trimmed spectrum
-        self.nk = nk
+        self.npix = npixs[instru]
+        self.nk = kwargs_IC14['nk']
         print(f"nobs: {self.nobs}, nchip: {self.nchip}, npix: {self.npix}")
 
         ### Physical parameters ###
@@ -184,11 +173,9 @@ class DopplerImaging():
         self.rv = kwargs_IC14['rv']
         self.lld = kwargs_IC14['LLD']
 
-        ### Wavelegnth parameters ###
-        self.wav0_nm = np.zeros((self.nchip, self.npix0))
+        ### Wavelength parameters ###
         self.wav_nm = np.zeros((self.nchip, self.npix))
 
-        self.wav0_nm = wav0_nm
         self.wav_nm = wav_nm
 
         self.wav_angs = np.array(self.wav_nm) * 10 # from nm to angstroms
@@ -199,12 +186,10 @@ class DopplerImaging():
         ### Spectrum and LSD parameters ###
         self.observed = np.empty((self.nobs, self.nchip, self.npix), dtype=float)
         self.template = np.empty_like(self.observed)
-        self.residual = np.empty_like(self.observed)
         self.error    = np.empty_like(self.observed)
 
         self.observed = observed
         self.template = template
-        self.residual = residual
         self.error = error
         self.timestamps = timestamps
         self.flux_err = eval(f'{np.median(self.error):.3f}') if self.instru == "IGRINS" else 0.02
@@ -859,19 +844,32 @@ class MaxEntropy():
             return metric
         
 
-def load_data(model_datafile, instru, nobs, goodchips, use_toy_spec=False):
-    global npix, npix0, flux_err
+def load_data(model_datafile, goodchips, instru='IGRINS', use_toy_spec=False):
+    '''Load model and data from a pickle file.
+
+    Parameters
+    ----------
+        model_datafile: str
+            Full path to the pickle file containing model and data.
+
+        goodchips: list
+            Indices of good orders to use, starting from 0.
+
+        instru: str
+            Instrument name, 'IGRINS' or 'CRIRES'.
+    '''
+
     # Load model and data
     with open(model_datafile, "rb") as f:
         data = pickle.load(f, encoding="latin1")
     lams = data["chiplams"][0] # in um
+    nobs = data['fobs0'].shape[0]
+    npix = data['fobs0'].shape[2]
     nchip = len(goodchips)
-    npix = lams.shape[1]
     print(f"nobs: {nobs}, nchip: {nchip}, npix: {npix}")
 
     observed = np.empty((nobs, nchip, npix))
     template = np.empty((nobs, nchip, npix))
-    residual = np.empty((nobs, nchip, npix))
     error = np.empty((nobs, nchip, npix))
 
     if instru == "IGRINS":
@@ -886,11 +884,6 @@ def load_data(model_datafile, instru, nobs, goodchips, use_toy_spec=False):
                     lams[jj],
                     data["chiplams"][k][jj],
                     data["chipmodnobroad"][k][jj]
-                )
-                residual[k, i] = np.interp(
-                    lams[jj], 
-                    data["chiplams"][k][jj],
-                    data["fobs0"][k][jj] - data["chipmods"][k][jj]
                 )
                 error[k, i] = np.interp(
                     lams[jj],
@@ -911,39 +904,26 @@ def load_data(model_datafile, instru, nobs, goodchips, use_toy_spec=False):
                     data["chiplams"][k][jj],
                     data["chipmodnobroad"][k][jj] / data["chipcors"][k][jj],
                 )
-                residual[k, i] = np.interp(
-                    lams[jj], 
-                    data["chiplams"][k][jj],
-                    data["obs1"][k][jj] - data["chipmods"][k][jj]
-                )
 
-    pad = 100
-    npix0 = len(lams[0])
-    npix = len(lams[0][pad:-pad])
     wav_nm = np.zeros((nchip, npix))
-    wav0_nm = np.zeros((nchip, npix0))
-    observed = observed[:, :, pad:-pad]
-    flux_err = eval(f'{error.mean():.3f}') if instru =="IGRINS" else 0.02
-
     for i, jj in enumerate(goodchips):
-        wav_nm[i] = lams[jj][pad:-pad] * 1000 # um to nm
-        wav0_nm[i] = lams[jj] * 1000 # um to nm
+        wav_nm[i] = lams[jj] * 1000 # um to nm
+
         if use_toy_spec:
             toy_spec = (
                 1.0
-                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2330) ** 2 / 0.03 ** 2)
-                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2335) ** 2 / 0.03 ** 2)
-                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2338) ** 2 / 0.03 ** 2)
-                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2345) ** 2 / 0.03 ** 2)
-                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2347) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav_nm[i] - 2330) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav_nm[i] - 2335) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav_nm[i] - 2338) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav_nm[i] - 2345) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav_nm[i] - 2347) ** 2 / 0.03 ** 2)
             )
             for k in range(nobs):
                 template[k, i] = toy_spec
-            mean_spectrum[i] = toy_spec
             flux_err = 0.002
 
     print("template:", template.shape)
     print("observed:", observed.shape)
-    print(f"wav: {wav_nm.shape}, wav0: {wav0_nm.shape}")
+    print(f"wav: {wav_nm.shape}")
 
-    return template, observed, residual, error, wav_nm, wav0_nm
+    return template, observed, error, wav_nm

@@ -180,6 +180,7 @@ if True:
     kwargs_run['ydeg'] = ydeg
 
     kwargs_IC14 = dict(
+        nk=nk,
         phases=phases,
         timestamps=timestamp,
         inc=inc, 
