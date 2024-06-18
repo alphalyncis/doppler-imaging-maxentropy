@@ -280,88 +280,6 @@ def spectra_from_sim(modelmap, contrast, roll, smoothing, mean_spectrum, wav_nm,
 
     return observed, fakemap
 
-def make_LSD_profile(instru, template, observed, wav_nm, goodchips, pmod, line_file, cont_file, nk, vsini, rv, period, timestamps, savedir, pad=100, cut=30, plotspec=False, colorbar=False):
-    global wav_angs, err_LSD_profiles, dbeta
-    print(instru)
-    nobs = observed.shape[0]
-    nchip = len(goodchips)
-    # Read daospec linelist
-    lineloc, lineew, _ = dao_getlines(line_file)
-    pspec_cont = fits.getdata(cont_file)
-    hdr_pspec_cont = fits.getheader(cont_file)
-    wspec = hdr_pspec_cont['crval1'] + np.arange(pspec_cont.size)*hdr_pspec_cont['cdelt1']
-    factor = 1e11 if "t1" in pmod else 1e5 # don't know why different model needs scaling with a factor
-    pspec_cont = pspec_cont/factor
-    spline = interpolate.UnivariateSpline(wspec, pspec_cont, s=0.0, k=1.0) #set up interpolation over the continuum measurement
-    #plt.figure(figsize=(6,1))
-    #plt.plot(wspec, pspec_cont)
-    #plt.title("daospec continuum")
-    #plt.show()
-
-    wav_angs = np.array(wav_nm) * 10 #convert nm to angstroms
-
-    # Compute LSD velocity grid:
-    dbeta = np.diff(wav_angs).mean()/wav_angs.mean()
-    print("dbeta", dbeta)
-    dx = - dbeta * np.arange(np.floor(-nk/2.+.5), np.floor(nk/2.+.5))
-    dv = const.c * dx / 1e3 # km/s
-
-    # Compute LSD:
-    kerns = np.zeros((nobs, nchip, nk), dtype=float)
-    modkerns = np.zeros((nobs, nchip, nk), dtype=float)
-    deltaspecs = np.zeros((nobs, nchip, npix), dtype=float)
-    for i, jj in enumerate(goodchips): 
-        print("chip", jj)
-        for kk in range(nobs):
-            shift = 1. + rv  # best rv shift for Callie is 9e-5
-            deltaspec = make_deltaspec(lineloc*shift, lineew, wav_angs[i], verbose=False, cont=spline(wav_angs[i]))
-            m,kerns[kk,i],b,c = dsa(deltaspec, observed[kk,i], nk)
-            m,modkerns[kk,i],b,c = dsa(deltaspec, template[kk,i,pad:-pad], nk) 
-            deltaspecs[kk,i] = deltaspec
-
-    # Plot lines vs. model
-    if plotspec:
-        plt.figure(figsize=(15, 2*nchip))
-        t=0
-        for i, jj in enumerate(goodchips):
-            plt.subplot(nchip,1,i+1)
-            plt.plot(wav_angs[i], deltaspecs[t,i], linewidth=0.5, color='C0', label="deltaspec")
-            plt.plot(wav_angs[i], template[t,i,pad:-pad], linewidth=0.6, color='C1', label="chipmodnobroad")
-            plt.plot(wav_angs[i], observed[t,i], linewidth=0.6, color='k', label="obs")
-            plt.text(x=wav_angs[i].min()-10, y=0, s=f"order={jj}")
-            if i==0:
-                plt.title(f"{pmod} model vs. lines at t={t}")
-        plt.legend(loc=4, fontsize=9)
-        #plt.show()
-        plt.savefig(paths.output / "LSD_deltaspecs.png", transparent=True)
-        
-    # shift kerns to center
-    modkerns, kerns = shift_kerns_to_center(modkerns, kerns, instru, goodchips, dv)
-    
-    # plot kerns
-    #plot_kerns_timeseries(kerns, goodchips, dv, gap=0.02)
-    #plot_kerns_timeseries(modkerns, goodchips, dv, gap=0.1)
-
-    err_LSD_profiles = np.median(kerns.mean(1).std(0)) 
-    # the error level across different obs of the chip-avged profile, median over nk pixels
-
-
-    # normalize kerns
-    obskerns_norm = cont_normalize_kerns(kerns, instru)
-    
-    # plot kerns + intrinsic_profile
-    plot_kerns_timeseries(modkerns, goodchips, dv, gap=0.1)
-    intrinsic_profiles = np.array([modkerns[:,i].mean(0) for i in range(nchip)])
-    plot_kerns_timeseries(obskerns_norm, goodchips, dv, gap=0.02, normed=True, intrinsic_profiles=intrinsic_profiles)
-    
-    ### Plot averaged line shapes
-    plot_chipav_kern_timeseries(obskerns_norm, dv, timestamps, savedir, gap=0.02, cut=int(cut/2+1))
-
-    ### Plot deviation map for each chip and mean deviation map
-    plot_deviation_map(obskerns_norm, goodchips, dv, vsini, timestamps, savedir, meanby="median", cut=cut, colorbar=colorbar)
-
-    return intrinsic_profiles, obskerns_norm, dbeta
-
 def solve_LSD_starry_lin(intrinsic_profiles, obskerns_norm, kwargs_run, kwargs_fig, annotate=False, colorbar=True):
     print("*** Using solver LSD+starry_lin ***")
 
@@ -1467,3 +1385,84 @@ def plot_deviation_map(obskerns_norm, goodchips, dv, vsini, timestamps, savedir,
     plt.tight_layout()
     plt.savefig(paths.figures / f"{savedir}/tvplot.png", bbox_inches="tight", dpi=150, transparent=True)
 
+def make_LSD_profile(instru, template, observed, wav_nm, goodchips, pmod, line_file, cont_file, nk, vsini, rv, period, timestamps, savedir, pad=100, cut=30, plotspec=False, colorbar=False):
+    global wav_angs, err_LSD_profiles, dbeta
+    print(instru)
+    nobs = observed.shape[0]
+    nchip = len(goodchips)
+    # Read daospec linelist
+    lineloc, lineew, _ = dao_getlines(line_file)
+    pspec_cont = fits.getdata(cont_file)
+    hdr_pspec_cont = fits.getheader(cont_file)
+    wspec = hdr_pspec_cont['crval1'] + np.arange(pspec_cont.size)*hdr_pspec_cont['cdelt1']
+    factor = 1e11 if "t1" in pmod else 1e5 # don't know why different model needs scaling with a factor
+    pspec_cont = pspec_cont/factor
+    spline = interpolate.UnivariateSpline(wspec, pspec_cont, s=0.0, k=1.0) #set up interpolation over the continuum measurement
+    #plt.figure(figsize=(6,1))
+    #plt.plot(wspec, pspec_cont)
+    #plt.title("daospec continuum")
+    #plt.show()
+
+    wav_angs = np.array(wav_nm) * 10 #convert nm to angstroms
+
+    # Compute LSD velocity grid:
+    dbeta = np.diff(wav_angs).mean()/wav_angs.mean()
+    print("dbeta", dbeta)
+    dx = - dbeta * np.arange(np.floor(-nk/2.+.5), np.floor(nk/2.+.5))
+    dv = const.c * dx / 1e3 # km/s
+
+    # Compute LSD:
+    kerns = np.zeros((nobs, nchip, nk), dtype=float)
+    modkerns = np.zeros((nobs, nchip, nk), dtype=float)
+    deltaspecs = np.zeros((nobs, nchip, npix), dtype=float)
+    for i, jj in enumerate(goodchips): 
+        print("chip", jj)
+        for kk in range(nobs):
+            shift = 1. + rv  # best rv shift for Callie is 9e-5
+            deltaspec = make_deltaspec(lineloc*shift, lineew, wav_angs[i], verbose=False, cont=spline(wav_angs[i]))
+            m,kerns[kk,i],b,c = dsa(deltaspec, observed[kk,i], nk)
+            m,modkerns[kk,i],b,c = dsa(deltaspec, template[kk,i,pad:-pad], nk) 
+            deltaspecs[kk,i] = deltaspec
+
+    # Plot lines vs. model
+    if plotspec:
+        plt.figure(figsize=(15, 2*nchip))
+        t=0
+        for i, jj in enumerate(goodchips):
+            plt.subplot(nchip,1,i+1)
+            plt.plot(wav_angs[i], deltaspecs[t,i], linewidth=0.5, color='C0', label="deltaspec")
+            plt.plot(wav_angs[i], template[t,i,pad:-pad], linewidth=0.6, color='C1', label="chipmodnobroad")
+            plt.plot(wav_angs[i], observed[t,i], linewidth=0.6, color='k', label="obs")
+            plt.text(x=wav_angs[i].min()-10, y=0, s=f"order={jj}")
+            if i==0:
+                plt.title(f"{pmod} model vs. lines at t={t}")
+        plt.legend(loc=4, fontsize=9)
+        #plt.show()
+        plt.savefig(paths.output / "LSD_deltaspecs.png", transparent=True)
+        
+    # shift kerns to center
+    modkerns, kerns = shift_kerns_to_center(modkerns, kerns, instru, goodchips, dv)
+    
+    # plot kerns
+    #plot_kerns_timeseries(kerns, goodchips, dv, gap=0.02)
+    #plot_kerns_timeseries(modkerns, goodchips, dv, gap=0.1)
+
+    err_LSD_profiles = np.median(kerns.mean(1).std(0)) 
+    # the error level across different obs of the chip-avged profile, median over nk pixels
+
+
+    # normalize kerns
+    obskerns_norm = cont_normalize_kerns(kerns, instru)
+    
+    # plot kerns + intrinsic_profile
+    plot_kerns_timeseries(modkerns, goodchips, dv, gap=0.1)
+    intrinsic_profiles = np.array([modkerns[:,i].mean(0) for i in range(nchip)])
+    plot_kerns_timeseries(obskerns_norm, goodchips, dv, gap=0.02, normed=True, intrinsic_profiles=intrinsic_profiles)
+    
+    ### Plot averaged line shapes
+    plot_chipav_kern_timeseries(obskerns_norm, dv, timestamps, savedir, gap=0.02, cut=int(cut/2+1))
+
+    ### Plot deviation map for each chip and mean deviation map
+    plot_deviation_map(obskerns_norm, goodchips, dv, vsini, timestamps, savedir, meanby="median", cut=cut, colorbar=colorbar)
+
+    return intrinsic_profiles, obskerns_norm, dbeta

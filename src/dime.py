@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
 import paths
+import pickle
 
 import scipy.constants as const
 import scipy.optimize as opt
@@ -23,44 +24,157 @@ import starry
 import lsd_utils as lsd
 import ELL_map_class as ELL_map
 import modelfitting as mf
-from config_run import npixs
+from config_run import npixs #TODO: remove this dependency
 
 class DopplerImaging():
-    """A class for Doppler Imaging routines.
+    """A class for Doppler Imaging reconstruction.
+
     Attributes
     ----------
-    obskerns_norm : 3darray, shape=(nobs, nchip, nk)
-        The observed line profiles (kerns).
+    instru : str
+        Instrument name, either "IGRINS" or "CRIRES".
 
-    intrinsic_profiles : 2darray, shape=(nchip, nk)
-        The model line profiles (modekerns).
+    goodchips : list
+        List of good orders to use.
 
-    dbeta: float
-        d_lam/lam_ref of the wavelength range that the line profile sits on.
+    npix0 : int
+        Number of pixels in the original spectrum.
 
-    nk: int
-        Size of line profile kernel.
+    npix : int
+        Number of pixels in the trimmed spectrum.
+
+    nchip : int
+        Number of orders used in Doppler imaging.
 
     nobs: int
-        Number of observations.
+        Number of observed epoches.
+
+    nk: int
+        Number of pixels of the LSD line profile kernel.
+
+    inc : float
+        Inclination of target in degrees (90 is equator-on).
+
+    vsini : float
+        Projected rotational velocity of target in km/s.
+
+    rv : float
+        Radial velocity of target in km/s.
+
+    lld : float
+        Limb-darkening coefficient.
+
+    wav0_nm : 2darray, shape=(nchip, npix0)
+        Wavelengths of the original spectrum in nm.
+
+    wav_nm : 2darray, shape=(nchip, npix)
+        Wavelengths of the trimmed spectrum in nm.
+
+    wav_angs : 2darray, shape=(nchip, npix)
+        Wavelengths of the trimmed spectrum in angstroms.
+
+    dbeta : float
+        d_lam/lam_ref of the wavelength range that the line profile sits on.
+
+    dv : 1darray, shape=(nk)
+        Velocity grid in km/s.
+
+    observed : 3darray, shape=(nobs, nchip, npix)
+        The observed spectra cube in each epoch and order.
+
+    template : 3darray, shape=(nobs, nchip, npix)
+        The template spectra cube in each epoch and order.
+
+    residual : 3darray, shape=(nobs, nchip, npix)
+        The fit residual cube in each epoch and order.
+
+    error : 3darray, shape=(nobs, nchip, npix)
+        The error of observed spectra in each epoch and order.
+
+    timestamps : 1darray, shape=(nobs)
+        Timestamps of the observations in hours.
+
+    flux_err : float
+        Average error level of the observed spectrum.
+
+    kerns : 3darray, shape=(nobs, nchip, nk)
+        The observed line profiles extracted by LSD.
+
+    modkerns : 3darray, shape=(nobs, nchip, nk)
+        The unbroaded model line profiles extracted by LSD.
+
+    err_LSD_profiles : float
+        Error level of the observed LSD profiles.
 
     phases: 1darray, shape=(nobs)
-        Phases corresponding to the obs timesteps. In radian (0~2*pi).
+        Phases corresponding to the observed timesteps. 
+        In radian (0 ~ 2*pi).
 
-    inc: float
-        Inclination of star in degrees (common definition, 90 is equator-on)
+    alpha : float
+        Regularization parameter for the maximum entropy inversion.
+
+    Rmatrix : 2darray, shape=(ncell, nobs*nk)
+        The Doppler Imaging R matrix. See Vogt et al. 1987 for details.
+
+    dime : MaxEntropy object
+        The Maximum Entropy object, handy for computing inversion.
+
+    dmap : ELL_map.Map object
+        The map object for the Doppler imaging grid.
+
+    iseqarea : bool
+        Whether to use equal-area grid for the map. Default is True.
+    
+    nlat : int
+        Number of latitudes in the map grid. 
+        If equal area, is the input nlat to compute the grid,
+        Updated to the actual nlat of longest row after the grid is computed.
+
+    nlon : int
+        Number of longitudes in the map grid.
+        If equal area, is the input nlon to compute the grid.
+        Updated to the actual nlon after the grid is computed.
+
+    ncell : int
+        Number of cells in the map grid. 
+        If equal area, gets updated after the grid is computed.
+
+    uncovered : list
+        List of uncovered cells in the map grid.
+
+    flatguess : 1darray, shape=(ncell)
+        Initial guess of the flat map. Default is 100.
+
+    flatmodel : 1darray, shape=(ncell)
+        The flat map model computed by flatguess * Rmatrix.
+
+    bounds : list 
+        List of lower and upper bounds for map cell values.
+
+    bestparams : 1darray, shape=(ncell)
+        The best-fit map cell values in 1d.
+
+    bestparamgrid : 2darray, shape=(nlat, nlon)
+        The best-fit map cell values reshaped to 2d grid.
+        If equal area, projected to a rectangular grid.
+
+    fitres : Any
+        Stores the optimization result of the best-fit map.
+
     """
 
     def __init__(self, instru, observed, template, residual, error, timestamps, wav0_nm, wav_nm,
                  goodchips, kwargs_IC14, nk, nobs):
+        #TODO: add types to the attributes
+        
         ### General parameters ###
         self.instru = instru
         self.nobs = nobs
         self.goodchips = goodchips
         self.nchip = len(self.goodchips)
-        self.npix0 = npixs[instru]
+        self.npix0 = npixs[instru] # number of pixels in the original spectrum
         self.pad = 100
-        self.npix = self.npix0 - 2 * self.pad
+        self.npix = self.npix0 - 2 * self.pad # number of pixels in the trimmed spectrum
         self.nk = nk
         print(f"nobs: {self.nobs}, nchip: {self.nchip}, npix: {self.npix}")
 
@@ -94,17 +208,14 @@ class DopplerImaging():
         self.error = error
         self.timestamps = timestamps
         self.flux_err = eval(f'{np.median(self.error):.3f}') if self.instru == "IGRINS" else 0.02
-        self.mean_spectrum = np.empty((self.nchip, self.npix0))
-        for i, jj in enumerate(self.goodchips):
-            self.mean_spectrum[i] = np.median(template[:, i], axis=0)
 
         ### LSD parameters ###
         self.deltaspecs = np.zeros((self.nobs, self.nchip, self.npix), dtype=float) 
-        self.kerns = np.zeros((self.nobs, self.nchip, self.nk), dtype=float) # observed profiles
-        self.modkerns = np.zeros((self.nobs, self.nchip, self.nk), dtype=float) # unbroaded model profiles
+        self.kerns      = np.zeros((self.nobs, self.nchip, self.nk), dtype=float) # observed profiles
+        self.modkerns   = np.zeros((self.nobs, self.nchip, self.nk), dtype=float) # unbroaded model profiles
         self.err_LSD_profiles = np.empty((), dtype=float)
         self.obskerns_norm = np.zeros_like(self.kerns)
-        self.uniform_profiles = np.zeros((self.nchip, self.nk), dtype=float) # is avged obskerns over time
+        self.uniform_profiles   = np.zeros((self.nchip, self.nk), dtype=float) # is avged obskerns over time
         self.intrinsic_profiles = np.zeros((self.nchip, self.nk), dtype=float) # is avged modkerns over time
 
         ### Max entropy inversion parameters ###
@@ -141,7 +252,32 @@ class DopplerImaging():
 
     def make_lsd_profile(self, line_file, cont_file, modname='t1500g1000f8', savedir=None,
                          plot_deltaspec=False, plot_lsd_profiles=True, plot_deviation_map=True):
-        '''Calculate the LSD profile for a given spectrum.'''
+        '''Calculate the LSD profile for a given spectrum.
+
+        Parameters
+        ----------
+            line_file : str
+                Path to the linelist file.
+
+            cont_file : str
+                Path to the continuum file.
+
+            modname : str
+                Model name for the continuum file. Default is 't1500g1000f8'.
+
+            savedir : str
+                Full path to save the figures. Default is None.
+
+            plot_deltaspec : bool
+                If True, plot the LSD profile and the template. Default is False.
+
+            plot_lsd_profiles : bool
+                If True, plot the LSD profiles. Default is True.
+
+            plot_deviation_map : bool
+                If True, plot the deviation map. Default is True.
+        
+        '''
         # Read daospec linelist
         lineloc, lineew, _ = lsd.dao_getlines(line_file)
         pspec_cont = fits.getdata(cont_file)
@@ -164,7 +300,9 @@ class DopplerImaging():
         self.err_LSD_profiles = np.median(self.kerns.mean(1).std(0))
 
         if plot_deltaspec:
-            self.plot_lsd_specta(savedir=savedir)
+            self.plot_lsd_spectra()
+            if savedir is not None:
+                plt.savefig(f'{savedir}/deltaspec.png', bbox_inches="tight", dpi=150, transparent=True)
 
         # Shift kerns to center
         self.modkerns, self.kerns = self.shift_kerns_to_center(shiftkerns=False)
@@ -176,14 +314,27 @@ class DopplerImaging():
         self.intrinsic_profiles = np.array([self.modkerns[:,c].mean(axis=0) for c in range(self.nchip)])
 
         if plot_lsd_profiles:
-            self.plot_lp_timeseries(self.obskerns_norm, self.timestamps, savedir=savedir)
+            self.plot_lp_timeseries(self.obskerns_norm, self.timestamps)
+            if savedir is not None:
+                plt.savefig(f'{savedir}/LSD_profiles.png', bbox_inches="tight", dpi=150, transparent=True)
 
         if plot_deviation_map:
-            self.plot_deviation_map(self.obskerns_norm, self.timestamps, savedir=savedir)
+            self.plot_deviation_map(self.obskerns_norm, self.timestamps)
+            if savedir is not None:
+                plt.savefig(f'{savedir}/deviation_map.png', bbox_inches="tight", dpi=150, transparent=True)
 
     def compute_Rmatrix(self):
-        '''
-        Compute the R matrix for the inversion.
+        '''Compute the R matrix for the inversion. See Vogt et al. 1987 for details.
+        Requires intrinsic_profiles attribute to be set first.
+        Updates Rmatrix attribute.
+
+        Parameters
+        ----------
+            None
+
+        Return
+        ------
+            None
         '''
         ### Set up the intrinsic profile function
         mean_profile = np.median(self.intrinsic_profiles, axis=0) # can safely take means over chips now
@@ -213,7 +364,8 @@ class DopplerImaging():
         for the best parameters by minizing (metric = 0.5 * chisq - alpha * entropy).
         Updates the bestparams and bestparamgrid attributes when called.
 
-        Input:
+        Parameters
+        ----------
             create_obs_from_diff: bool
                 if True, create new observation from the difference between observed 
                 and uniform profile.
@@ -221,7 +373,8 @@ class DopplerImaging():
             solver: str
                 minimizer used for fitting, 'ic14' or 'scipy'.
 
-        Return: 
+        Return
+        ------
             None
         '''
         ### Compute the R matrix
@@ -287,8 +440,14 @@ class DopplerImaging():
                                      int(0.5*bestparams2d.shape[1]), axis=1)
 
     def reshape_map_to_grid(self, plot_unstretched_map=False):
-        '''Reshape a 1D map to a 2D grid.
-        Returns 2d map grid.'''
+        '''Reshape a 1D map vector to a 2D grid.
+        Requires bestparams attribute, to be called after solve().
+
+        Return
+        ------
+            bestparams2d: 2darray, shape=(nlat, nlon)
+                The best-fit map cell values reshaped to 2d grid.
+        '''
         if self.iseqarea:
             # reshape into list
             start = 0
@@ -359,7 +518,16 @@ class DopplerImaging():
                 obskerns_norm[n,i] = obskerns[n,i] / np.polyval(continuumfit[n,i], np.arange(self.nk))
         return obskerns_norm
 
-    def plot_lsd_specta(self, t=0, savedir=None):
+    def plot_lsd_spectra(self, t=0, savedir=None):
+        '''Plot the LSD profile and the template.
+
+        Parameters
+        ----------
+            t: int
+                Index of the observation epoch to plot, from 0 to nobs-1.
+            savedir: str
+                Full path (include filename) to save the figure.
+        '''
         plt.figure(figsize=(15, 2*self.nchip))
         for i, jj in enumerate(self.goodchips):
             plt.subplot(self.nchip, 1, i+1)
@@ -375,10 +543,15 @@ class DopplerImaging():
 
     def plot_lp_timeseries_all(self, line_profiles, intrinsic_profiles=None, savedir=None, gap=0.03):
         '''Plot time series of line profiles of each order.
-        Input: 
+
+        Parameters
+        ---------- 
             line_profiles: 3darray, shape=(nobs, nchip, nk)
             intrinsic_profiles: 2darray, shape=(nchip, nk)
-            gap: float, gap between each line profile
+            savedir: str
+                Full path (include filename) to save the figure.
+            gap: float
+                Gap between each line profile.
         '''
         colors = [cm.gnuplot_r(x) for x in np.linspace(0, 1, self.nobs+4)]
         plt.figure(figsize=(self.nchip*3, 4))
@@ -394,14 +567,17 @@ class DopplerImaging():
         if savedir is not None:
             plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
 
-    def plot_lp_timeseries(self, line_profiles, timestamps, savedir=None, gap=0.025, cut=17):
+    def plot_lp_timeseries(self, line_profiles, timestamps, savedir=None, gap=0.025):
         '''Plot time series of order-averaged line profiles.
-        Input:
+
+        Parameters
+        ----------
             line_profiles: 3darray, shape=(nobs, nchip, nk)
             timestamps: 1darray, shape=(nobs)
-            savedir: str, path to save the figure
-            gap: float, gap between each line profile
-            cut: int, number of pixels to cut at the flat wings of line profiles
+            savedir: str
+                Full path (include filename) to save the figure.
+            gap: float
+                Gap between each line profile.
         '''
         colors = [cm.gnuplot_r(x) for x in np.linspace(0, 1, self.nobs+4)]
         fig, ax = plt.subplots(figsize=(4, 5))
@@ -422,12 +598,17 @@ class DopplerImaging():
             plt.savefig(savedir, bbox_inches="tight", dpi=200, transparent=True)
 
     def plot_deviation_map_all(self, line_profiles, timestamps, savedir=None, lim=0.003):
-        '''Plot deviation map for each order. A darker deviation means a surface feature
-         fainter than background.
-        Input:
+        '''Plot deviation map for each order. 
+        A darker deviation pattern means a surface feature fainter than the background.
+        
+        Parameters
+        ----------
             line_profiles: 3darray, shape=(nobs, nchip, nk)
+
             timestamps: 1darray, shape=(nobs)
-            savedir: str, path to save the figure
+
+            savedir: str
+                Full path (include filename) to save the figure.
         '''
         uniform_profiles = np.zeros((self.nchip, self.nk))
         ratio = 1.3 if self.nobs < 10 else 0.7
@@ -453,30 +634,31 @@ class DopplerImaging():
     
     def plot_deviation_map(self, line_profiles, timestamps, savedir=None, meanby='median', 
                            colorbar=True, lim=0.003):
-        '''Plot order-averaged deviation map. A darker deviation means a surface feature
-         fainter than background.
-        Input:
+        '''Plot order-averaged deviation map.
+        A darker deviation pattern means a surface feature fainter than the background.
+
+        Parameters
+        ----------
             line_profiles: 3darray, shape=(nobs, nchip, nk)
+
             timestamps: 1darray, shape=(nobs)
-            savedir: str, path to save the figure
-            meanby: str, method to calculate the mean deviation: 
+
+            savedir: str
+                Full path (include filename) to save the figure.
+            meanby: str
+                Method to calculate the mean deviation: 
                 'median': take the median of the deviation over all orders
                 'median_each': take the median LP for each order, then take the deviation from uniform LP
                 'mean': take the mean of the deviation over all orders
         '''
-        uniform_profiles = np.zeros((self.nchip, self.nk))
         ratio = 1.3 if self.nobs < 10 else 0.7
 
-        for i, jj in enumerate(self.goodchips):
-            #TODO: change uniform_profiles to median
-            uniform_profiles[i] = line_profiles[:,i].mean(axis=0) # averaged LP over times
-
         if meanby == "median":
-            mean_dev = np.median(np.array([line_profiles[:,i]-uniform_profiles[i] for i in range(self.nchip)]), axis=0) # mean over chips
+            mean_dev = np.median(np.array([line_profiles[:,i] - self.uniform_profiles[i] for i in range(self.nchip)]), axis=0) # mean over chips
         elif meanby == "median_each":
-            mean_dev = np.median(line_profiles, axis=1) - np.median(uniform_profiles,axis=0)
+            mean_dev = np.median(line_profiles, axis=1) - np.median(self.uniform_profiles,axis=0)
         elif meanby == "mean":
-            mean_dev = np.mean(np.array([line_profiles[:,i]-uniform_profiles[i] for i in range(self.nchip)]), axis=0) # mean over chips
+            mean_dev = np.mean(np.array([line_profiles[:,i] - self.uniform_profiles[i] for i in range(self.nchip)]), axis=0) # mean over chips
         plt.figure(figsize=(10,6))
         plt.imshow(mean_dev, 
             extent=(self.dv.max(), self.dv.min(), timestamps[-1], 0),
@@ -502,15 +684,28 @@ class DopplerImaging():
 
     def plot_mollweide_map(self, clevel=5, sigma=1, colorbar=False, vmax=None, vmin=None, 
                            colormap=plt.cm.plasma, contour=False, savedir=None, annotate=False):
-        '''Plot doppler map from an array.
-        Input:
-            clevel: int, number of contour levels
-            sigma: float, contour smoothing factor
-            colorbar: bool, whether to plot colorbar
-            vmax: float, max value for colorbar, relative to 100
-            vmin: float, min value for colorbar, relative to 100
+        '''Plot Doppler map from a 2d array.
+
+        Parameters
+        ----------
+            clevel: int
+                Number of contour levels.
+            sigma: float
+                Smoothing factor for contour.
+            colorbar: bool
+                Whether to plot colorbar.
+            vmax: float
+                Max value for colorbar, relative to 100.
+            vmin: float
+                Min value for colorbar, relative to 100.
             colormap: plt.cm object
-            annotate: bool, whether to annotate the plot
+                Colormap for the plot.
+            contour: bool
+                Whether to plot contour.
+            savedir: str
+                Full path (include filename) to save the figure.
+            annotate: bool
+                Whether to annotate the plot.
         '''
         cmap = colormap.copy()
         cmap.set_bad('gray', 1)
@@ -538,24 +733,42 @@ class DopplerImaging():
         if annotate:
             map_type = "eqarea" if self.iseqarea else "latlon"
             plt.text(-3.5, -1, f"""
-                chip=averaged{kwargs_fig['goodchips']} 
-                solver=IC14new {map_type} 
-                noise={kwargs_fig['noisetype']} 
-                err_level={flux_err} 
-                contrast={kwargs_fig['contrast']} 
+                chip=averaged{self.goodchips} 
+                solver=IC14new {map_type}
+                err_level={flux_err}
                 limbdark={self.lld}""",
             fontsize=8)
         
         if savedir is not None:
             plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
 
-    def plot_starry_map(self, ydeg=7, colorbar=False):
+    def plot_starry_map(self, ydeg=7, colorbar=False, savedir=None):
+        '''Plot the best-fit map using starry.
+
+        Parameters
+        ----------
+            ydeg: int
+                Degree of spherical harmonics used in starry map.
+
+            colorbar: bool
+                Whether to plot colorbar.
+            
+            savedir: str
+                Full path (include filename) to save the figure.
+        '''
         fig, ax = plt.subplots(figsize=(7,3))
         showmap = starry.Map(ydeg=ydeg)
         showmap.load(self.bestparamgrid_r)
         showmap.show(ax=ax, projection="moll", colorbar=colorbar)
 
-    def plot_fit_results(self):
+    def plot_fit_results(self, savedir=None):
+        '''Plot the observed and best-fit LP series.
+
+        Parameters
+        ----------
+            savedir: str
+                Full path (include filename) to save the figure.
+        '''
         obs_2d = np.reshape(self.observed_1d, (self.nobs, self.nk))
         model_observation = self.dime.normalize_model(np.dot(self.bestparams, self.Rmatrix))
         bestmodel_2d = np.reshape(model_observation, (self.nobs, self.nk))
@@ -566,7 +779,12 @@ class DopplerImaging():
             plt.plot(self.dv, obs_2d[i] - 0.02*i, color='k', linewidth=1)
             plt.plot(self.dv, bestmodel_2d[i] - 0.02*i, color='r', linewidth=1)
             plt.plot(self.dv, flatmodel_2d[i] - 0.02*i, '--', color='gray', linewidth=1)
-        plt.legend(labels=['obs', 'best-fit map', 'flat map'])
+        plt.legend(labels=['observed', 'best-fit', 'flat'], loc=4)
+        plt.xlabel("velocity (km/s)")
+
+        if savedir is not None:
+            plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
+
 
 class MaxEntropy():
     """A class for Maximum Entropy computations for Doppler imaging."""
@@ -641,3 +859,91 @@ class MaxEntropy():
             return metric
         
 
+def load_data(model_datafile, instru, nobs, goodchips, use_toy_spec=False):
+    global npix, npix0, flux_err
+    # Load model and data
+    with open(model_datafile, "rb") as f:
+        data = pickle.load(f, encoding="latin1")
+    lams = data["chiplams"][0] # in um
+    nchip = len(goodchips)
+    npix = lams.shape[1]
+    print(f"nobs: {nobs}, nchip: {nchip}, npix: {npix}")
+
+    observed = np.empty((nobs, nchip, npix))
+    template = np.empty((nobs, nchip, npix))
+    residual = np.empty((nobs, nchip, npix))
+    error = np.empty((nobs, nchip, npix))
+
+    if instru == "IGRINS":
+        for k in range(nobs):
+            for i, jj in enumerate(goodchips):
+                observed[k, i] = np.interp(
+                    lams[jj], 
+                    data["chiplams"][k][jj],
+                    data["fobs0"][k][jj]
+                )
+                template[k, i] = np.interp(
+                    lams[jj],
+                    data["chiplams"][k][jj],
+                    data["chipmodnobroad"][k][jj]
+                )
+                residual[k, i] = np.interp(
+                    lams[jj], 
+                    data["chiplams"][k][jj],
+                    data["fobs0"][k][jj] - data["chipmods"][k][jj]
+                )
+                error[k, i] = np.interp(
+                    lams[jj],
+                    data["chiplams"][k][jj],
+                    remove_spike(data["eobs0"][k][jj])
+                )
+
+    elif instru == "CRIRES":
+        for k in range(nobs):
+            for i, jj in enumerate(goodchips):
+                observed[k, i] = np.interp(
+                    lams[jj],
+                    data["chiplams"][k][jj],
+                    data["obs1"][k][jj] / data["chipcors"][k][jj],
+                )
+                template[k, i] = np.interp(
+                    lams[jj],
+                    data["chiplams"][k][jj],
+                    data["chipmodnobroad"][k][jj] / data["chipcors"][k][jj],
+                )
+                residual[k, i] = np.interp(
+                    lams[jj], 
+                    data["chiplams"][k][jj],
+                    data["obs1"][k][jj] - data["chipmods"][k][jj]
+                )
+
+    pad = 100
+    npix0 = len(lams[0])
+    npix = len(lams[0][pad:-pad])
+    wav_nm = np.zeros((nchip, npix))
+    wav0_nm = np.zeros((nchip, npix0))
+    observed = observed[:, :, pad:-pad]
+    flux_err = eval(f'{error.mean():.3f}') if instru =="IGRINS" else 0.02
+
+    for i, jj in enumerate(goodchips):
+        wav_nm[i] = lams[jj][pad:-pad] * 1000 # um to nm
+        wav0_nm[i] = lams[jj] * 1000 # um to nm
+        if use_toy_spec:
+            toy_spec = (
+                1.0
+                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2330) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2335) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2338) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2345) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2347) ** 2 / 0.03 ** 2)
+            )
+            for k in range(nobs):
+                template[k, i] = toy_spec
+            mean_spectrum[i] = toy_spec
+            flux_err = 0.002
+
+    print("template:", template.shape)
+    print("observed:", observed.shape)
+    print(f"wav: {wav_nm.shape}, wav0: {wav0_nm.shape}")
+
+    return template, observed, residual, error, wav_nm, wav0_nm

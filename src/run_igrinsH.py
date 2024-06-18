@@ -1,13 +1,7 @@
-from doppler_imaging import *
-from dime import *
-import numpy as np
 import paths
-
-##############################################################################
-####################    Configs     ##########################################
-##############################################################################
-
-
+import os
+from doppler_imaging import load_data
+from dime import *
 from config_run import *
 
 use_eqarea = True
