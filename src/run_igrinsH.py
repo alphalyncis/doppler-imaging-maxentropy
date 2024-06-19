@@ -21,10 +21,9 @@ if not os.path.exists(paths.figures/savedir):
 ##############################################################################
 
 assert simulation_on == False
-assert savedir == "igrinsH"
 
 # Load data from pickle fit
-wav_nm, template, observed, error= load_data(model_datafile, goodchips)
+wav_nm, template, observed, error = load_data(model_datafile, goodchips)
 
 # Compute LSD mean profile
 #intrinsic_profiles, obskerns_norm, dbeta = make_LSD_profile(instru, template, observed, wav_nm, goodchips, pmod, line_file, cont_file, nk, 

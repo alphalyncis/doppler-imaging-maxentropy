@@ -35,98 +35,6 @@ from PIL import Image
 ####################   Methods for workflow    #################################
 ################################################################################
 
-def load_data(model_datafile, instru, nobs, goodchips, use_toy_spec=False):
-    global npix, npix0, flux_err
-    # Load model and data
-    with open(model_datafile, "rb") as f:
-        data = pickle.load(f, encoding="latin1")
-    lams = data["chiplams"][0] # in um
-    nchip = len(goodchips)
-    npix = lams.shape[1]
-    print(f"nobs: {nobs}, nchip: {nchip}, npix: {npix}")
-
-    observed = np.empty((nobs, nchip, npix))
-    template = np.empty((nobs, nchip, npix))
-    residual = np.empty((nobs, nchip, npix))
-    error = np.empty((nobs, nchip, npix))
-
-    if instru == "IGRINS":
-        for k in range(nobs):
-            for i, jj in enumerate(goodchips):
-                observed[k, i] = np.interp(
-                    lams[jj], 
-                    data["chiplams"][k][jj],
-                    data["fobs0"][k][jj]
-                )
-                template[k, i] = np.interp(
-                    lams[jj],
-                    data["chiplams"][k][jj],
-                    data["chipmodnobroad"][k][jj]
-                )
-                residual[k, i] = np.interp(
-                    lams[jj], 
-                    data["chiplams"][k][jj],
-                    data["fobs0"][k][jj] - data["chipmods"][k][jj]
-                )
-                error[k, i] = np.interp(
-                    lams[jj],
-                    data["chiplams"][k][jj],
-                    remove_spike(data["eobs0"][k][jj])
-                )
-
-    elif instru == "CRIRES":
-        for k in range(nobs):
-            for i, jj in enumerate(goodchips):
-                observed[k, i] = np.interp(
-                    lams[jj],
-                    data["chiplams"][k][jj],
-                    data["obs1"][k][jj] / data["chipcors"][k][jj],
-                )
-                template[k, i] = np.interp(
-                    lams[jj],
-                    data["chiplams"][k][jj],
-                    data["chipmodnobroad"][k][jj] / data["chipcors"][k][jj],
-                )
-                residual[k, i] = np.interp(
-                    lams[jj], 
-                    data["chiplams"][k][jj],
-                    data["obs1"][k][jj] - data["chipmods"][k][jj]
-                )
-
-    pad = 100
-    npix0 = len(lams[0])
-    npix = len(lams[0][pad:-pad])
-    wav_nm = np.zeros((nchip, npix))
-    wav0_nm = np.zeros((nchip, npix0))
-    mean_spectrum = np.zeros((nchip, npix0))
-    observed = observed[:, :, pad:-pad]
-    flux_err = eval(f'{error.mean():.3f}') if instru =="IGRINS" else 0.02
-
-    for i, jj in enumerate(goodchips):
-        wav_nm[i] = lams[jj][pad:-pad] * 1000 # um to nm
-        wav0_nm[i] = lams[jj] * 1000 # um to nm
-        if use_toy_spec:
-            toy_spec = (
-                1.0
-                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2330) ** 2 / 0.03 ** 2)
-                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2335) ** 2 / 0.03 ** 2)
-                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2338) ** 2 / 0.03 ** 2)
-                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2345) ** 2 / 0.03 ** 2)
-                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2347) ** 2 / 0.03 ** 2)
-            )
-            for k in range(nobs):
-                template[k, i] = toy_spec
-            mean_spectrum[i] = toy_spec
-            flux_err = 0.002
-        mean_spectrum[i] = np.mean(template[:, i], axis=0)
-
-    print("mean_spectrum:", mean_spectrum.shape)
-    print("template:", template.shape)
-    print("observed:", observed.shape)
-    print(f"wav: {wav_nm.shape}, wav0: {wav0_nm.shape}")
-
-    return mean_spectrum, template, observed, residual, error, wav_nm, wav0_nm
-
 def spectra_from_sim(modelmap, contrast, roll, smoothing, mean_spectrum, wav_nm, wav0_nm,
                      error, residual, noisetype, kwargs_sim, savedir, n_lat=181, n_lon=361, 
                      r_deg=33, lat_deg=30, lon_deg=0, r2_deg=20, lat2_deg=45, lon2_deg=0,
@@ -599,18 +507,6 @@ def plot_timeseries(map, modelspec, theta, obsflux=None, overlap=8.0, figsize=(5
         ax_f[t].set_rasterization_zorder(0)
     fac = (np.max(modelspec) - np.min(modelspec)) / overlap
     ax_f[0].set_ylim(-fac, fac)
- 
-def remove_spike(data, kern_size=10, lim_denom=5):
-    data_pad = np.concatenate([np.ones(kern_size)*np.median(data[:kern_size]), data, np.ones(kern_size)*np.median(data[-kern_size:-1])])
-    data_filt = np.copy(data)
-    for i, val in enumerate(data):
-        i_pad = i + kern_size
-        seg = data_pad[i_pad-kern_size:i_pad+kern_size]
-        seg = seg[np.abs(seg-np.median(seg))<20]
-        lim = np.median(seg)/lim_denom
-        if val > np.median(seg) + lim or val < np.median(seg) - lim:
-            data_filt[i] = np.median(seg[int(kern_size/5):-int(kern_size/5)])
-    return data_filt
 
 def make_gif_map(bestparamgrid, inc, period, savedir, step=15, fps=4, vmax=110):
     fig = plt.figure(figsize=(10,5))
@@ -672,6 +568,98 @@ def make_gif_map(bestparamgrid, inc, period, savedir, step=15, fps=4, vmax=110):
 ############################################################################################################
 ### retired functions ###
 ############################################################################################################
+
+def load_data(model_datafile, instru, nobs, goodchips, use_toy_spec=False):
+    global npix, npix0, flux_err
+    # Load model and data
+    with open(model_datafile, "rb") as f:
+        data = pickle.load(f, encoding="latin1")
+    lams = data["chiplams"][0] # in um
+    nchip = len(goodchips)
+    npix = lams.shape[1]
+    print(f"nobs: {nobs}, nchip: {nchip}, npix: {npix}")
+
+    observed = np.empty((nobs, nchip, npix))
+    template = np.empty((nobs, nchip, npix))
+    residual = np.empty((nobs, nchip, npix))
+    error = np.empty((nobs, nchip, npix))
+
+    if instru == "IGRINS":
+        for k in range(nobs):
+            for i, jj in enumerate(goodchips):
+                observed[k, i] = np.interp(
+                    lams[jj], 
+                    data["chiplams"][k][jj],
+                    data["fobs0"][k][jj]
+                )
+                template[k, i] = np.interp(
+                    lams[jj],
+                    data["chiplams"][k][jj],
+                    data["chipmodnobroad"][k][jj]
+                )
+                residual[k, i] = np.interp(
+                    lams[jj], 
+                    data["chiplams"][k][jj],
+                    data["fobs0"][k][jj] - data["chipmods"][k][jj]
+                )
+                error[k, i] = np.interp(
+                    lams[jj],
+                    data["chiplams"][k][jj],
+                    remove_spike(data["eobs0"][k][jj])
+                )
+
+    elif instru == "CRIRES":
+        for k in range(nobs):
+            for i, jj in enumerate(goodchips):
+                observed[k, i] = np.interp(
+                    lams[jj],
+                    data["chiplams"][k][jj],
+                    data["obs1"][k][jj] / data["chipcors"][k][jj],
+                )
+                template[k, i] = np.interp(
+                    lams[jj],
+                    data["chiplams"][k][jj],
+                    data["chipmodnobroad"][k][jj] / data["chipcors"][k][jj],
+                )
+                residual[k, i] = np.interp(
+                    lams[jj], 
+                    data["chiplams"][k][jj],
+                    data["obs1"][k][jj] - data["chipmods"][k][jj]
+                )
+
+    pad = 100
+    npix0 = len(lams[0])
+    npix = len(lams[0][pad:-pad])
+    wav_nm = np.zeros((nchip, npix))
+    wav0_nm = np.zeros((nchip, npix0))
+    mean_spectrum = np.zeros((nchip, npix0))
+    observed = observed[:, :, pad:-pad]
+    flux_err = eval(f'{error.mean():.3f}') if instru =="IGRINS" else 0.02
+
+    for i, jj in enumerate(goodchips):
+        wav_nm[i] = lams[jj][pad:-pad] * 1000 # um to nm
+        wav0_nm[i] = lams[jj] * 1000 # um to nm
+        if use_toy_spec:
+            toy_spec = (
+                1.0
+                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2330) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2335) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2338) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2345) ** 2 / 0.03 ** 2)
+                - 0.99 * np.exp(-0.5 * (wav0_nm[i] - 2347) ** 2 / 0.03 ** 2)
+            )
+            for k in range(nobs):
+                template[k, i] = toy_spec
+            mean_spectrum[i] = toy_spec
+            flux_err = 0.002
+        mean_spectrum[i] = np.mean(template[:, i], axis=0)
+
+    print("mean_spectrum:", mean_spectrum.shape)
+    print("template:", template.shape)
+    print("observed:", observed.shape)
+    print(f"wav: {wav_nm.shape}, wav0: {wav0_nm.shape}")
+
+    return mean_spectrum, template, observed, residual, error, wav_nm, wav0_nm
 
 def solve_IC14new(intrinsic_profiles, obskerns_norm, kwargs_IC14, kwargs_fig, clevel=7,
                   ret_both=True, annotate=False, colorbar=False, plot_cells=False, plot_starry=False, plot_fit=False,
@@ -1466,3 +1454,15 @@ def make_LSD_profile(instru, template, observed, wav_nm, goodchips, pmod, line_f
     plot_deviation_map(obskerns_norm, goodchips, dv, vsini, timestamps, savedir, meanby="median", cut=cut, colorbar=colorbar)
 
     return intrinsic_profiles, obskerns_norm, dbeta
+
+def remove_spike(data, kern_size=10, lim_denom=5):
+    data_pad = np.concatenate([np.ones(kern_size)*np.median(data[:kern_size]), data, np.ones(kern_size)*np.median(data[-kern_size:-1])])
+    data_filt = np.copy(data)
+    for i, val in enumerate(data):
+        i_pad = i + kern_size
+        seg = data_pad[i_pad-kern_size:i_pad+kern_size]
+        seg = seg[np.abs(seg-np.median(seg))<20]
+        lim = np.median(seg)/lim_denom
+        if val > np.median(seg) + lim or val < np.median(seg) - lim:
+            data_filt[i] = np.median(seg[int(kern_size/5):-int(kern_size/5)])
+    return data_filt

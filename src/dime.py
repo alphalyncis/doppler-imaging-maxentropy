@@ -8,7 +8,6 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib import cm
 import paths
 import pickle
 
@@ -17,6 +16,7 @@ import scipy.optimize as opt
 from scipy import interpolate
 from scipy.signal import savgol_filter
 from scipy.ndimage.filters import gaussian_filter
+from scipy.ndimage import zoom
 
 from astropy.io import fits
 import starry
@@ -24,7 +24,6 @@ import starry
 import lsd_utils as lsd
 import ELL_map_class as ELL_map
 import modelfitting as mf
-from config_run import npixs #TODO: remove this dependency
 
 class DopplerImaging():
     """A class for Doppler Imaging reconstruction.
@@ -534,7 +533,7 @@ class DopplerImaging():
             gap: float
                 Gap between each line profile.
         '''
-        colors = [cm.gnuplot_r(x) for x in np.linspace(0, 1, self.nobs+4)]
+        colors = [plt.cm.gnuplot_r(x) for x in np.linspace(0, 1, self.nobs+4)]
         plt.figure(figsize=(self.nchip*3, 4))
         for i, jj in enumerate(self.goodchips):
             plt.subplot(1, self.nchip, i+1)
@@ -560,7 +559,7 @@ class DopplerImaging():
             gap: float
                 Gap between each line profile.
         '''
-        colors = [cm.gnuplot_r(x) for x in np.linspace(0, 1, self.nobs+4)]
+        colors = [plt.cm.gnuplot_r(x) for x in np.linspace(0, 1, self.nobs+4)]
         fig, ax = plt.subplots(figsize=(4, 5))
         cut = int((self.nk - 70) / 2 + 1.)
         for n in range(self.nobs):
@@ -716,7 +715,7 @@ class DopplerImaging():
             plt.text(-3.5, -1, f"""
                 chip=averaged{self.goodchips} 
                 solver=IC14new {map_type}
-                err_level={flux_err}
+                err_level={self.flux_err}
                 limbdark={self.lld}""",
             fontsize=8)
         
@@ -840,7 +839,7 @@ class MaxEntropy():
             return metric
         
 ############################################################################################################
-##### Utils #####
+##### Utils ################################################################################################
 ############################################################################################################
 
 def load_data(model_datafile, goodchips, instru='IGRINS', pad=100):
@@ -951,3 +950,226 @@ def make_toy_spectrum(wavmin, wavmax, npix,
     err = 0.002
 
     return wav, spec, err
+
+def make_fakemap(maptype, contrast,
+                r_deg=33, lat_deg=30, lon_deg=0, 
+                r1_deg=20, lat1_deg=45, lon1_deg=0):
+    '''Generate a fake map for simulating Doppler imaging data.
+    In a mollweide projection,
+    lon=0 is at map center, lon=-180 is at left edge.
+    lat=0 is at equator, lat=-90 is at bottom edge.
+
+    Parameters
+    ----------
+        maptype: str
+            Type of map to generate.
+            Options: 
+            "flat", "1spot", "2spot", "1band", "1uniband", "2band", 
+            "gcm", "SPOT", "testspots".
+
+        contrast: float
+            Fraction of feature brightness to background, 0-1. 
+            e.g. contrast=0.8 means spot is 80% of background brightness.
+
+        r_deg: float
+            For spots, radius of spot in degrees.
+            For bands, half width of band in degrees.
+
+        lat_deg: float
+            Latitude of spot center or band center in degrees.
+
+        lon_deg: float
+            Longitude of spot center or band trough in degrees.
+            For GCM, longitude of feature center.
+
+        r1_deg, lat1_deg, lon1_deg: 
+            Parameters for the second feature.
+
+    Return
+    ------
+        fakemap: 2darray
+            Fake map grid.
+    '''
+    nlat, nlon = 180, 360
+    fakemap = np.ones((nlat, nlon))
+    x, y = np.meshgrid(np.linspace(-nlon/2, nlon/2 - 1, nlon), 
+                       np.linspace(-nlat/2, nlat/2 - 1, nlat))
+
+    if maptype == "flat":
+        print("Created a flat map.")
+
+    elif maptype == "1spot":
+        print(f"Created 1 spot of brightness {contrast*100:.0f}% of surrounding.")
+        print(f"Spot lat={lat_deg}, lon={lon_deg}, radius={r_deg} deg.")
+        fakemap[np.sqrt((y-lat_deg)**2 + (x-lon_deg)**2) <= r_deg] = contrast
+
+    elif maptype == "2spot":
+        print(f"Created 2 spots of brightness {contrast*100:.0f}% of surrounding.")
+        print(f"Spot1 lat={lat_deg}, lon={lon_deg}, radius={r_deg} deg.")
+        print(f"Spot2 lat={lat1_deg}, lon={lon1_deg}, radius={r1_deg} deg.")
+        fakemap[np.sqrt((y-lat_deg)**2 + (x-lon_deg)**2) <= r_deg] = contrast
+        fakemap[np.sqrt((y-lat1_deg)**2 + (x-lon1_deg)**2) <= r1_deg] = contrast
+
+    elif maptype == "1band":
+        band_hw = r_deg # half width
+        band_lat = lat_deg
+        amp = 1. - contrast
+        phase = lon_deg
+        print(f"Created 1 band with wave amplitude {amp*100:.0f}%.")
+        print(f"Band lat={band_lat}, width={band_hw} deg, trough at lon={phase}.")
+        band_ind = np.s_[int(nlat/2)+band_lat-band_hw:int(nlat/2)+band_lat+band_hw]
+        fakemap[band_ind] += amp * np.sin((x[band_ind]-phase-nlat/2) * np.pi/180)
+
+    elif maptype == "1uniband":
+        print(f"Created 1 uniform band with brightness {contrast*100}% of surrounding.")
+        print(f"Band lat={lat_deg}, width={r_deg} deg.")
+        fakemap[int(nlat/2)+lat_deg-r_deg:int(nlat/2)+lat_deg+r_deg] = contrast
+
+    elif maptype == "2band":
+        amp = 1 - contrast
+        print(f"Created 2 bands with wave amplitude {amp*100:.0f}%.")
+        print(f"Band1 lat={lat_deg}, width={r_deg} deg, trough at lon={lon_deg}.")
+        print(f"Band2 lat={lat1_deg}, width={r1_deg} deg, trough at lon={lon1_deg}.")
+        band_ind = np.s_[int(nlat/2)+lat_deg-r_deg:int(nlat/2)+lat_deg+r_deg]
+        fakemap[band_ind] += amp * np.sin((x[band_ind]-lon_deg-90) * np.pi/180)
+        band1_ind = np.s_[int(nlat/2)+lat1_deg-r1_deg:int(nlat/2)+lat1_deg+r1_deg]
+        fakemap[band1_ind] += amp * np.sin((x[band1_ind]-lon1_deg-90) * np.pi/180)
+
+    elif maptype == "gcm":
+        amp = 1. - contrast
+        img = np.loadtxt(paths.data/'modelmaps/gcm.txt')
+        img = zoom(img, (nlat/img.shape[0], nlon/img.shape[1]), mode='nearest')
+        img /= np.median(img)
+        diff = 1. - img
+        diffnew = diff * amp / diff.max()
+        fakemap = 1. - diffnew
+        fakemap = np.roll(fakemap, shift=int(lon_deg), axis=1)
+        print(f"Created GCM map, original spot contrast = {(1-diff)*100:.0f}%.")
+        print(f"Flux scaled to requested contrast = {contrast*100:.0f}%.")
+        print(f"Spot aligned at lon={lon_deg}.")
+
+    elif maptype == "SPOT":
+        fn = paths.data / 'modelmaps/SPOT.png'
+        img = plt.imread(fn)
+        img = np.dot(img[..., :3], [0.2989, 0.5870, 0.1140])
+        img = zoom(img[::-1], (nlat/img.shape[0], nlon/img.shape[1]), mode='nearest')
+        img /= np.median(img)
+        diff = 1. - img
+        diffnew = diff * amp / diff.max()
+        fakemap = 1. - diffnew
+        print(f"Created SPOT letters map with contrast {contrast*100:.0f}%.")
+
+    elif maptype == "testspots":
+        lat_1, lon_1 = 60, -90
+        lat_2, lon_2 = 30, 0
+        lat_3, lon_3 = 0, 90
+        r_deg = 20
+        fakemap[np.sqrt((y-lat_1)**2 + (x-lon_1)**2) <= r_deg] = contrast
+        fakemap[np.sqrt((y-lat_2)**2 + (x-lon_2)**2) <= r_deg] = contrast
+        fakemap[np.sqrt((y-lat_3)**2 + (x-lon_3)**2) <= r_deg] = contrast
+        print(f"Created test map with 3 spots {contrast*100}% of surrounding.")
+    
+    return fakemap
+
+def simulate_data(fakemap, mean_spectrum, wav_nm, flux_err,
+                kwargs_sim, savedir=None, 
+                smoothing=0.1, cmap=plt.cm.plasma,
+                plot_ts=False, plot_IC14=True, colorbar=True):
+    nobs = kwargs_sim['nt']
+    nchip = wav_nm.shape[0]
+    npix = wav_nm.shape[1]
+    pad = 100
+    x = np.arange(pad, wav_nm.shape[1]+pad)
+    x_new = np.arange(0, wav_nm.shape[1]+pad*2)
+    wav0_nm = np.array([interpolate.interp1d(x, chip, fill_value='extrapolate')(x_new) 
+        for chip in wav_nm])
+    
+    simulated_flux = np.empty((nobs, nchip, npix), dtype=float)
+
+    for i in range(nchip):
+        sim_map = starry.DopplerMap(lazy=False, wav=wav_nm[i], wav0=wav0_nm[i], **kwargs_sim)
+        sim_map.load(maps=[fakemap], smoothing=smoothing)
+        sim_map[1] = kwargs_sim["u1"]
+
+        noise =  np.random.normal(np.zeros((nobs, npix)), flux_err)
+
+        sim_map.spectrum = np.pad(mean_spectrum[i], pad, mode='edge')
+        model_flux = sim_map.flux(kwargs_sim["theta"])
+        simulated_flux[:,i,:] = model_flux + noise
+
+    # Plot fakemap
+    plot_map = starry.Map(lazy=False, **kwargs_sim)
+    plot_map.load(fakemap)
+
+    if plot_IC14:
+        fig = plt.figure(figsize=(5,3))
+        ax2 = fig.add_subplot(111)
+        image = plot_map.render(projection="moll")
+        im = ax2.imshow(image, cmap=cmap, aspect=0.5, origin="lower", interpolation="nearest")
+        ax2.axis("off")
+        if colorbar:
+            fig.colorbar(im, ax=ax2, fraction=0.023, pad=0.045)
+        ax = fig.add_subplot(111, projection='mollweide')
+        ax.patch.set_alpha(0)
+        yticks = np.linspace(-np.pi/2, np.pi/2, 7)[1:-1]
+        xticks = np.linspace(-np.pi, np.pi, 13)[1:-1]
+        ax.set_yticks(yticks, labels=[f'{deg:.0f}˚' for deg in yticks*180/np.pi], fontsize=7, alpha=0.5)
+        ax.set_xticks(xticks, labels=[f'{deg:.0f}˚' for deg in xticks*180/np.pi], fontsize=7, alpha=0.5)
+        if colorbar:
+            fig.colorbar(im, ax=ax, fraction=0.023, pad=0.04, alpha=0)
+        ax.grid('major', color='k', linewidth=0.25, alpha=0.7)
+        for item in ax.spines.values():
+            item.set_linewidth(1.2)
+    
+    else:
+        fig, ax = plt.subplots()
+        sim_map.show(ax=ax, projection="moll", colorbar=colorbar)
+
+    plt.savefig(paths.figures / f"{savedir}/fakemap.png", bbox_inches="tight", dpi=100, transparent=True)
+
+    if plot_ts:
+        plot_timeseries(sim_map, model_flux, kwargs_sim["theta"], obsflux=simulated_flux[-1], overlap=2)
+
+    return simulated_flux
+
+def plot_timeseries(map, modelspec, theta, obsflux=None, overlap=8.0, figsize=(5, 11.5)):
+    # Plot the "Joy Division" graph
+    fig = plt.figure(figsize=figsize)
+    ax_img = [
+        plt.subplot2grid((map.nt, 8), (t, 0), rowspan=1, colspan=1)
+        for t in range(map.nt)
+    ]
+    ax_f = [plt.subplot2grid((map.nt, 8), (0, 1), rowspan=1, colspan=7)]
+    ax_f += [
+        plt.subplot2grid(
+            (map.nt, 8),
+            (t, 1),
+            rowspan=1,
+            colspan=7,
+            sharex=ax_f[0],
+            sharey=ax_f[0],
+        )
+        for t in range(1, map.nt)
+    ]
+
+    for t in range(map.nt):
+        map.show(theta=theta[t], ax=ax_img[t], res=300)
+
+        for l in ax_img[t].get_lines():
+            if l.get_lw() < 1:
+                l.set_lw(0.5 * l.get_lw())
+                l.set_alpha(0.75)
+            else:
+                l.set_lw(1.25)
+        ax_img[t].set_rasterization_zorder(100)
+
+        # plot the obs data points
+        if obsflux is not None:
+            ax_f[t].plot(obsflux[t] - modelspec[t, 0], "k.",
+                        ms=0.5, alpha=0.75, clip_on=False, zorder=-1)
+        # plot the spectrum
+        ax_f[t].plot(modelspec[t] - modelspec[t, 0], "C1-", lw=0.5, clip_on=False)
+
+        ax_f[t].set_rasterization_zorder(0)
+    fac = (np.max(modelspec) - np.min(modelspec)) / overlap
+    ax_f[0].set_ylim(-fac, fac)
