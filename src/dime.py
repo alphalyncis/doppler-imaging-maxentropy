@@ -154,36 +154,27 @@ class DopplerImaging():
 
     """
 
-    def __init__(self, instru, observed, template, error, timestamps, wav_nm,
-                 goodchips, kwargs_IC14):
+    def __init__(self, wav_nm, observed, template, error, timestamps,
+                 goodchips, instru='IGRINS', kwargs_IC14={}):
         #TODO: add types to the attributes
 
-        ### General parameters ###
+        ### General attributes ###
         self.instru = instru
-        self.nobs = len(timestamps)
+        self.nobs = observed.shape[0]
+        self.npix = observed.shape[2]
         self.goodchips = goodchips
-        self.nchip = len(self.goodchips)
-        self.npix = npixs[instru]
-        self.nk = kwargs_IC14['nk']
+        self.nchip = len(goodchips)
         print(f"nobs: {self.nobs}, nchip: {self.nchip}, npix: {self.npix}")
 
-        ### Physical parameters ###
+        ### Physical attributes ###
         self.inc = kwargs_IC14['inc']
         self.vsini = kwargs_IC14['vsini']
         self.rv = kwargs_IC14['rv']
         self.lld = kwargs_IC14['LLD']
 
-        ### Wavelength parameters ###
-        self.wav_nm = np.zeros((self.nchip, self.npix))
-
+        ### Spectrum attributes ###
         self.wav_nm = wav_nm
-
         self.wav_angs = np.array(self.wav_nm) * 10 # from nm to angstroms
-        self.dbeta = np.diff(self.wav_angs).mean()/self.wav_angs.mean()
-        self.dv = np.arange(np.floor(-self.nk/2.+0.5), np.floor(self.nk/2.+0.5)) \
-            * - self.dbeta * const.c * 1e-3  # velocity grid in km/s
-
-        ### Spectrum and LSD parameters ###
         self.observed = np.empty((self.nobs, self.nchip, self.npix), dtype=float)
         self.template = np.empty_like(self.observed)
         self.error    = np.empty_like(self.observed)
@@ -194,7 +185,12 @@ class DopplerImaging():
         self.timestamps = timestamps
         self.flux_err = eval(f'{np.median(self.error):.3f}') if self.instru == "IGRINS" else 0.02
 
-        ### LSD parameters ###
+        ### LSD attributes ###
+        self.nk = kwargs_IC14['nk']
+        self.dbeta = np.diff(self.wav_angs).mean()/self.wav_angs.mean()
+        self.dv = np.arange(np.floor(-self.nk/2.+0.5), np.floor(self.nk/2.+0.5)) \
+            * - self.dbeta * const.c * 1e-3  # velocity grid in km/s
+
         self.deltaspecs = np.zeros((self.nobs, self.nchip, self.npix), dtype=float) 
         self.kerns      = np.zeros((self.nobs, self.nchip, self.nk), dtype=float) # observed profiles
         self.modkerns   = np.zeros((self.nobs, self.nchip, self.nk), dtype=float) # unbroaded model profiles
@@ -203,9 +199,9 @@ class DopplerImaging():
         self.uniform_profiles   = np.zeros((self.nchip, self.nk), dtype=float) # is avged obskerns over time
         self.intrinsic_profiles = np.zeros((self.nchip, self.nk), dtype=float) # is avged modkerns over time
 
-        ### Max entropy inversion parameters ###
+        ### Maximum entropy inversion parameters ###
         self.alpha = kwargs_IC14['alpha']
-        self.phases = kwargs_IC14['phases']
+        self.phases = kwargs_IC14['phases'] #TODO: simplify phase/timestamp?
         self.inc_ = (90 - self.inc) * np.pi / 180 # IC14 defined 0 <-> equator-on, pi/2 <-> face-on
         self.iseqarea = kwargs_IC14['eqarea']
         self.nlat = kwargs_IC14['nlat']
@@ -280,7 +276,7 @@ class DopplerImaging():
                 deltaspec = lsd.make_deltaspec(
                     lineloc*shift, lineew, self.wav_angs[i], verbose=False, cont=spline(self.wav_angs[i]))
                 _, self.kerns[kk,i] ,_ ,_ = lsd.dsa(deltaspec, self.observed[kk,i], self.nk)
-                _, self.modkerns[kk,i],_ ,_ = lsd.dsa(deltaspec, self.template[kk,i,self.pad:-self.pad], self.nk) 
+                _, self.modkerns[kk,i],_ ,_ = lsd.dsa(deltaspec, self.template[kk,i], self.nk) 
                 self.deltaspecs[kk,i] = deltaspec
         self.err_LSD_profiles = np.median(self.kerns.mean(1).std(0))
 
@@ -843,29 +839,20 @@ class MaxEntropy():
         else:
             return metric
         
+############################################################################################################
+##### Utils #####
+############################################################################################################
 
-def load_data(model_datafile, goodchips, instru='IGRINS', use_toy_spec=False):
-    '''Load model and data from a pickle file.
+def load_data(model_datafile, goodchips, instru='IGRINS', pad=100):
+    '''Load model and data from a pickle file.'''
 
-    Parameters
-    ----------
-        model_datafile: str
-            Full path to the pickle file containing model and data.
-
-        goodchips: list
-            Indices of good orders to use, starting from 0.
-
-        instru: str
-            Instrument name, 'IGRINS' or 'CRIRES'.
-    '''
-
-    # Load model and data
     with open(model_datafile, "rb") as f:
         data = pickle.load(f, encoding="latin1")
-    lams = data["chiplams"][0] # in um
+    lams = np.median(data["chiplams"], axis=0) # in um
     nobs = data['fobs0'].shape[0]
     npix = data['fobs0'].shape[2]
     nchip = len(goodchips)
+    print(f"Data loaded from file {model_datafile}.")
     print(f"nobs: {nobs}, nchip: {nchip}, npix: {npix}")
 
     observed = np.empty((nobs, nchip, npix))
@@ -905,25 +892,62 @@ def load_data(model_datafile, goodchips, instru='IGRINS', use_toy_spec=False):
                     data["chipmodnobroad"][k][jj] / data["chipcors"][k][jj],
                 )
 
-    wav_nm = np.zeros((nchip, npix))
-    for i, jj in enumerate(goodchips):
-        wav_nm[i] = lams[jj] * 1000 # um to nm
+    # Trim the edges of spectrum
+    wav_nm = lams[goodchips, pad:-pad] * 1000 # um to nm
+    observed = observed[:, :, pad:-pad]
+    template = template[:, :, pad:-pad]
+    error = error[:, :, pad:-pad]
 
-        if use_toy_spec:
-            toy_spec = (
-                1.0
-                - 0.99 * np.exp(-0.5 * (wav_nm[i] - 2330) ** 2 / 0.03 ** 2)
-                - 0.99 * np.exp(-0.5 * (wav_nm[i] - 2335) ** 2 / 0.03 ** 2)
-                - 0.99 * np.exp(-0.5 * (wav_nm[i] - 2338) ** 2 / 0.03 ** 2)
-                - 0.99 * np.exp(-0.5 * (wav_nm[i] - 2345) ** 2 / 0.03 ** 2)
-                - 0.99 * np.exp(-0.5 * (wav_nm[i] - 2347) ** 2 / 0.03 ** 2)
-            )
-            for k in range(nobs):
-                template[k, i] = toy_spec
-            flux_err = 0.002
-
-    print("template:", template.shape)
     print("observed:", observed.shape)
-    print(f"wav: {wav_nm.shape}")
+    print("template:", template.shape)
+    print("wav:", wav_nm.shape)
 
-    return template, observed, error, wav_nm
+    return wav_nm, template, observed, error
+
+def remove_spike(data, kern_size=10, lim_denom=5):
+    data_pad = np.concatenate([np.ones(kern_size)*np.median(data[:kern_size]), data, np.ones(kern_size)*np.median(data[-kern_size:-1])])
+    data_filt = np.copy(data)
+    for i, val in enumerate(data):
+        i_pad = i + kern_size
+        seg = data_pad[i_pad-kern_size:i_pad+kern_size]
+        seg = seg[np.abs(seg-np.median(seg))<20]
+        lim = np.median(seg)/lim_denom
+        if val > np.median(seg) + lim or val < np.median(seg) - lim:
+            data_filt[i] = np.median(seg[int(kern_size/5):-int(kern_size/5)])
+    return data_filt
+
+def make_toy_spectrum(wavmin, wavmax, npix, 
+                      amps=[0.9, 0.9, 0.9, 0.9, 0.9],
+                      centers=[2330, 2335, 2338, 2345, 2347], 
+                      widths=[0.03, 0.03, 0.03, 0.03, 0.03]):
+    '''Make a toy spectrum for testing.
+
+    Parameters
+    ----------
+        wavmin: float
+            Minimum wavelength in nm.
+        wavmax: float
+            Maximum wavelength in nm.
+        npix: int
+            Number of pixels in spectrum.
+        amps: list
+            Amplitudes of the Gaussian lines.
+        centers: list
+            Centers of the Gaussian lines.
+        widths: list
+            Widths of the Gaussian lines.
+
+    Returns
+    -------
+        wav: 1darray
+            Wavelength array in nm.
+        toy_spec: 1darray
+            Toy spectrum with Gaussian lines.
+    '''
+    wav = np.linspace(wavmin, wavmax, npix)
+    spec = np.ones_like(wav)
+    for i in range(len(amps)):
+        spec -= amps[i] * np.exp(-0.5 * (wav - centers[i])**2 / widths[i]**2)
+    err = 0.002
+
+    return wav, spec, err

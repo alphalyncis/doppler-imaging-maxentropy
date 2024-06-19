@@ -1,22 +1,20 @@
 import paths
 import os
-from doppler_imaging import load_data
-from dime import *
+from dime import DopplerImaging, load_data
 from config_run import *
 
 use_eqarea = True
 savedir = "igrinsH"
 band = "H"
-goodchips_run[instru][target][band] = [1,2,3,4]
-goodchips = goodchips_run[instru][target][band]
+goodchips = [1,2,3,4]
 nchip = len(goodchips)
 
 modelspec = "t1400g1000f8"
-model_datafile = paths.data / f'{instru}_{target}_{band}_{modelspec}.pickle'
+model_datafile = paths.data/f'{instru}_{target}_{band}_{modelspec}.pickle'
 pmod = f'linbroad_{modelspec}'
 
-if not os.path.exists(paths.figures / savedir):
-    os.makedirs(paths.figures / savedir)
+if not os.path.exists(paths.figures/savedir):
+    os.makedirs(paths.figures/savedir)
 
 ##############################################################################
 ####################      Run!      ##########################################
@@ -24,16 +22,15 @@ if not os.path.exists(paths.figures / savedir):
 
 assert simulation_on == False
 assert savedir == "igrinsH"
-print(f"Using real observation {model_datafile}")
+
 # Load data from pickle fit
-mean_spectrum, template, observed, residual, error, wav_nm, wav0_nm = load_data(model_datafile, instru, nobs, goodchips)
+wav_nm, template, observed, error= load_data(model_datafile, goodchips)
 
 # Compute LSD mean profile
 #intrinsic_profiles, obskerns_norm, dbeta = make_LSD_profile(instru, template, observed, wav_nm, goodchips, pmod, line_file, cont_file, nk, 
 #                                                     vsini, rv, period, timestamps[target], savedir, cut=cut)
 
-mapB_H = DopplerImaging(instru, observed, template, residual, error, timestamps[target], wav0_nm, wav_nm,
-                        goodchips, kwargs_IC14, nk, nobs)
+mapB_H = DopplerImaging(wav_nm, observed, template, error, timestamps, goodchips, kwargs_IC14=kwargs_IC14)
 mapB_H.make_lsd_profile(line_file, cont_file, plot_lsd_profiles=False, plot_deviation_map=False)
 mapB_H.solve(create_obs_from_diff=True, solver='scipy')
 
