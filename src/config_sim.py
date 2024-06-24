@@ -5,33 +5,12 @@ import paths
 ####################   Constants    ##########################################
 ##############################################################################
 
-OPTIONS = {
-    "modelmap": ["1spot", "1band", "2band", "blank"],
-    "noisetype": ["residual", "random", "obserr", "none", "res+random"],
-    "instru": ["IGRINS", "CRIRES"],
-    "target": ["W1049A", "W1049B", "2M0036_1103", "2M0036_1105"],
-    "band": ["K", "H", "both"],
-    "solver": ["starry_lin", "starry_opt", "IC14new", "IC14orig"],
-    "map_type": ["eqarea", "latlon"],
-    "modelspec": ["lte015.0-5.0", "t1500g1000f8"],
-    "LSD": ["new", "orig", None]
-}
 
-goodchips_sim = {
-    "IGRINS": {
-        "K": [1, 2, 3, 4, 5, 7, 12, 13, 15, 16, 18], #[1,2,4,13],
-        "H": [3,4,5,6,18]
-    },
-    "CRIRES": {
-        "K": [0,1,2,3],
-        "H": [0,1,2,3]
-    }
-}
 
 goodchips_sim = {
     "IGRINS": {
         "W1049B":{
-            "K": [0, 1, 2, 3, 4, 5, 15, 16, 17, 18, 19], 
+            "K": [0, 1, 2, 3, 4, 5, 15, 16, 17, 18], 
             "H": [0, 1, 2, 3, 4, 5, 16, 17, 18, 19] 
         },
         "W1049A":{
@@ -39,8 +18,8 @@ goodchips_sim = {
             "H": [1, 2, 3, 4, 5, 6, 17, 18, 19]
         },
         "2M0036_1103":{
-            "K": [2,4,5,6,12,13,14,15,16,18,19],
-            "H": [1,2,3,4,5,6,7,8,9,10,11,13,16,18] 
+            "K": [2, 4, 5, 6, 12, 13, 14, 15, 16, 18, 19],
+            "H": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 16, 18] 
         },
         "2M0036_1105":{
             "K": [2,4,5,6,11,12,13,16,18], 
@@ -68,34 +47,25 @@ rvs =     {"W1049B": 7.05e-5, "W1049A": 5.4e-5, "2M0036_1103": 6e-5,  "2M0036_11
 ####################    Settings    ##########################################
 ##############################################################################
 
-simulation_on = True
-savedir = "sim"
 
 #################### Simulation settings ############################
-use_toy_spec = False
-modelmap = "1spot"
-noisetype = "res+random"
 
-fakemap_nlat, fakemap_nlon = 181, 361
-roll = 0.28 # 0-1
-contrast = 0.5
-smoothing = 0.1
+contrast = 0.7
 
 #################### Run settings ####################################
 
+flux_err = 0.025
 instru = "IGRINS"
 target = "W1049B"
 band = "K"
-#solver = "IC14new"
-map_type = "eqarea"
+use_eqarea = True
 
 modelspec = "t1500g1000f8"
-LSD = "new"
+
 
 ########## IC14 parameters ##########
 nk = 125 if instru != "CRIRES" else 203
-cut = nk - 70
-LLD = 0.4
+lld = 0.4
 alpha = 2000
 ftol = 0.01 # tolerance for convergence of maximum-entropy
 nstep = 2000
@@ -106,7 +76,7 @@ ydeg_sim = 16
 ydeg = 8
 udeg = 1
 nc = 1
-u1 = LLD
+u1 = lld
 vsini_max = 40000.0
 
 ########## Starry optimization parameters ##########
@@ -119,40 +89,16 @@ niter = 5000
 
 if True:
     # Auto consistent options
-    flux_err = 0.01 if use_toy_spec else 0.025
-
-    if map_type == "eqarea":
-        use_eqarea = True
 
     nobs = nobss[target]
 
     # set chips to include
     goodchips = goodchips_sim[instru][target][band]
-    if use_toy_spec:
-        goodchips = [4]
-    nchip = len(goodchips)
 
     # set model files to use
     if "t1" in modelspec:
-        if instru == "CRIRES": #TODO: put CRIRES data here
-            model_datafiles = {"W1049B": 'fainterspectral-fits_6.pickle', "W1049A":'brighterspectral-fits_6.pickle'}
-            model_datafile = model_datafiles[target]
-        else:
-            model_datafile = paths.data / f'{instru}_{target}_{band}_{modelspec}.pickle'
-        pmod = f'linbroad_{modelspec}'
-        rv = rvs[target]
-        if use_toy_spec:
-            print("Using toy spectrum...")
-            pmod = f'toy_{modelspec}'
-            rv = 0
 
-    elif "lte" in modelspec: #TODO: shall I just delete this option
-        if instru == "CRIRES":
-            model_datafiles = {"W1049B": 'fainterspectral-fits_6.pickle', "W1049A":'brighterspectral-fits_6.pickle'}
-            model_datafile = model_datafiles[target]
-        else:
-            model_datafile = paths.data / f'{instru}_{target}_{band}_{modelspec}.pickle'
-        pmod = 'linbroad_lte015'
+        pmod = f'linbroad_{modelspec}'
         rv = rvs[target]
 
     line_file = paths.data / f'linelists/{pmod}_edited.clineslsd'

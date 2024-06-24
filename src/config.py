@@ -5,21 +5,11 @@ import paths
 ####################   Constants    ##########################################
 ##############################################################################
 
-OPTIONS = {
-    "modelmap": ["1spot", "1band", "2band", "blank"],
-    "noisetype": ["residual", "random", "obserr", "none", "res+random"],
-    "instru": ["IGRINS", "CRIRES"],
-    "target": ["W1049A", "W1049B", "W1049A_0209", "W1049B_0209", "2M0036_1103", "2M0036_1105"],
-    "band": ["K", "H", "both"],
-    "solver": ["starry_lin", "starry_opt", "IC14new", "IC14orig"],
-    "map_type": ["eqarea", "latlon"],
-    "modelspec": ["lte015.0-5.0", "t1500g1000f8"],
-    "LSD": ["new", "orig", None]
-}
 
 npixs = {"IGRINS": 1848, "CRIRES": 1024}
+nks = {"IGRINS": 125, "CRIRES": 203}
 
-goodchips_run = {
+goodchipslist = {
     "IGRINS": {
         "W1049B":{
             "K": [0, 1, 2, 3, 4, 5, 15, 16, 17, 18], #[1, 4, 13], #
@@ -56,8 +46,22 @@ goodchips_run = {
     }
 }
 
-nobss =   {"W1049B": 14,     "W1049A": 14,     "W1049B_0209": 14,     "W1049A_0209": 14,     "2M0036_1103": 7   ,  "2M0036_1105": 8}
+bestmodels = {
+    "W1049B": {"K":"t1500g1000f8",
+               "H":"t1500g1000f8"},
+    "W1049A": {"K":"t1500g1000f8",
+               "H":"t1500g1000f8"},
+    "W1049B_0209": {"K":"t1500g1000f8",
+                    "H":"t1500g1000f8"},
+    "W1049A_0209": {"K":"t1500g1000f8",
+                    "H":"t1500g1000f8"},
+    "2M0036_1103": {"K":"t1500g1000f8",
+                    "H":"t1500g1000f8"},
+    "2M0036_1105": {"K":"t1500g1000f8",
+                    "H":"t1500g1000f8"}
+}
 
+nobss =   {"W1049B": 14,     "W1049A": 14,     "W1049B_0209": 14,     "W1049A_0209": 14,     "2M0036_1103": 7   ,  "2M0036_1105": 8}
 periods = {"W1049B": 5,      "W1049A": 7,      "W1049B_0209": 5,      "W1049A_0209": 7,      "2M0036_1103": 2.7 ,  "2M0036_1105": 2.7}
 incs =    {"W1049B": 80,     "W1049A": 70,     "W1049B_0209": 80,     "W1049A_0209": 70,     "2M0036_1103": 51  ,  "2M0036_1105": 51}
 vsinis =  {"W1049B": 29e3,   "W1049A": 21e3,   "W1049B_0209": 29e3,   "W1049A_0209": 21e3,   "2M0036_1103": 33e3,  "2M0036_1105": 33e3}
@@ -94,26 +98,14 @@ timestamps = { # obs times in hour, computed from obs headers (JD-DATE)
 ####################    Settings    ##########################################
 ##############################################################################
 
-simulation_on = False
-savedir = "igrinsH"
-use_toy_spec = False
-use_eqarea = True
 
 #################### Run settings ####################################
 
-flux_err = 0.01 if use_toy_spec else 0.025
-instru = "IGRINS"
-target = "W1049B"
-band = "K"
-#solver = "IC14new"
-map_type = "eqarea"
+use_eqarea = True
 
-modelspec = "t1500g1000f8"
-LSD = "new"
 
 ########## IC14 parameters ##########
-nk = 125 if instru == "IGRINS" else 203
-LLD = 0.4
+lld = 0.4
 alpha = 2000
 ftol = 0.01 # tolerance for convergence of maximum-entropy
 nstep = 2000
@@ -124,7 +116,6 @@ ydeg_sim = 16
 ydeg = 8
 udeg = 1
 nc = 1
-u1 = LLD
 vsini_max = 40000.0
 
 ########## Starry optimization parameters ##########
@@ -135,24 +126,18 @@ niter = 5000
 
 #################### Automatic ####################################
 
-if True:
+def load_config(instru, target, band, sim=False):
     # Auto consistent options
-    contrast = "real"
-    noisetype = "real"
 
     nobs = nobss[target]
+    nk = nks[instru]
 
     # set chips to include
-    goodchips = goodchips_run[instru][target][band]
-    nchip = len(goodchips)
+    goodchips = goodchipslist[instru][target][band]
+    modelspec = bestmodels[target][band]
 
     # set model files to use
-    model_datafile = paths.data / f'{instru}_{target}_{band}_{modelspec}.pickle'
-    pmod = f'linbroad_{modelspec}'
     rv = rvs[target]
-
-    line_file = paths.data / f'linelists/{pmod}_edited.clineslsd'
-    cont_file = paths.data / f'linelists/{pmod}C.fits'
 
     # set solver parameters
     period = periods[target]
@@ -165,7 +150,7 @@ if True:
     phases = timestamp * 2 * np.pi / period # 0 ~ 2*pi in rad
     theta = 360.0 * timestamp / period      # 0 ~ 360 in degree
 
-    kwargs_sim = dict(
+    params_starry = dict(
         ydeg=ydeg_sim,
         udeg=udeg,
         nc=nc,
@@ -173,23 +158,25 @@ if True:
         inc=inc,
         nt=nobs,
         vsini_max=vsini_max,
-        u1=u1,
+        u1=lld,
         theta=theta)
 
-    kwargs_run = kwargs_sim.copy()
-    kwargs_run['ydeg'] = ydeg
-
-    kwargs_IC14 = dict(
+    params_run = dict(
         nk=nk,
         phases=phases,
         timestamps=timestamp,
         inc=inc, 
         vsini=vsini,
         rv=rv,
-        LLD=LLD, 
+        lld=lld, 
         eqarea=use_eqarea, 
         nlat=nlat, 
         nlon=nlon,
         alpha=alpha,
         ftol=ftol
     )
+
+    if sim:
+        return params_starry, params_run, goodchips, modelspec
+    else:
+        return params_run, goodchips, modelspec

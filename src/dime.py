@@ -24,6 +24,7 @@ import starry
 import lsd_utils as lsd
 import ELL_map_class as ELL_map
 import modelfitting as mf
+from config import nobss
 
 class DopplerImaging():
     """A class for Doppler Imaging reconstruction.
@@ -153,39 +154,39 @@ class DopplerImaging():
 
     """
 
-    def __init__(self, wav_nm, observed, template, error, timestamps,
-                 goodchips, instru='IGRINS', kwargs_IC14={}):
-        #TODO: add types to the attributes
+    def __init__(self, wavelength, goodchips, params_dict, instru='IGRINS'):
 
         ### General attributes ###
         self.instru = instru
-        self.nobs = observed.shape[0]
-        self.npix = observed.shape[2]
+        self.nobs = params_dict['phases'].shape[0]
+        self.npix = wavelength.shape[-1]
         self.goodchips = goodchips
         self.nchip = len(goodchips)
         print(f"nobs: {self.nobs}, nchip: {self.nchip}, npix: {self.npix}")
 
         ### Physical attributes ###
-        self.inc = kwargs_IC14['inc']
-        self.vsini = kwargs_IC14['vsini']
-        self.rv = kwargs_IC14['rv']
-        self.lld = kwargs_IC14['LLD']
+        self.inc = params_dict['inc']
+        self.vsini = params_dict['vsini']
+        self.rv = params_dict['rv']
+        self.lld = params_dict['lld']
 
         ### Spectrum attributes ###
-        self.wav_nm = wav_nm
+        #self.wav_nm = np.empty((self.nchip, self.npix), dtype=float)
+        self.wav_nm = wavelength
         self.wav_angs = np.array(self.wav_nm) * 10 # from nm to angstroms
+        
         self.observed = np.empty((self.nobs, self.nchip, self.npix), dtype=float)
         self.template = np.empty_like(self.observed)
         self.error    = np.empty_like(self.observed)
-
-        self.observed = observed
-        self.template = template
-        self.error = error
-        self.timestamps = timestamps
-        self.flux_err = eval(f'{np.median(self.error):.3f}') if self.instru == "IGRINS" else 0.02
+        
+        #self.observed = observed
+        #self.template = template
+        #self.error = error
+        self.timestamps = params_dict['timestamps']
+        self.flux_err = np.empty((), dtype=float)
 
         ### LSD attributes ###
-        self.nk = kwargs_IC14['nk']
+        self.nk = params_dict['nk']
         self.dbeta = np.diff(self.wav_angs).mean()/self.wav_angs.mean()
         self.dv = np.arange(np.floor(-self.nk/2.+0.5), np.floor(self.nk/2.+0.5)) \
             * - self.dbeta * const.c * 1e-3  # velocity grid in km/s
@@ -199,12 +200,12 @@ class DopplerImaging():
         self.intrinsic_profiles = np.zeros((self.nchip, self.nk), dtype=float) # is avged modkerns over time
 
         ### Maximum entropy inversion parameters ###
-        self.alpha = kwargs_IC14['alpha']
-        self.phases = kwargs_IC14['phases'] #TODO: simplify phase/timestamp?
+        self.alpha = params_dict['alpha']
+        self.phases = params_dict['phases'] #TODO: simplify phase/timestamp?
         self.inc_ = (90 - self.inc) * np.pi / 180 # IC14 defined 0 <-> equator-on, pi/2 <-> face-on
-        self.iseqarea = kwargs_IC14['eqarea']
-        self.nlat = kwargs_IC14['nlat']
-        self.nlon = kwargs_IC14['nlon']
+        self.iseqarea = params_dict['eqarea']
+        self.nlat = params_dict['nlat']
+        self.nlon = params_dict['nlon']
         self.dime = MaxEntropy(self.alpha, self.nk, self.nobs)
 
         ### Set up Map object
@@ -229,8 +230,23 @@ class DopplerImaging():
         self.chisq = None
         self.entropy = None
         self.fitres = None
+        self.model_observation = None
 
-    def make_lsd_profile(self, line_file, cont_file, modname='t1500g1000f8', savedir=None,
+    def load_data(self, observed, template, error):
+        '''Load data from cubes.
+        Required: 
+            wavelength : 2darray, shape=(nchip, npix)
+            observed : 3darray, shape=(nobs, nchip, npix)
+            template : 3darray, shape=(nobs, nchip, npix)
+            error : 3darray, shape=(nobs, nchip, npix)
+        '''
+        self.observed = observed
+        self.template = template
+        self.error = error
+        #self.timestamps = timestamps #TODO: add timesteps to the data
+        self.flux_err = eval(f'{np.median(self.error):.3f}') if self.instru == "IGRINS" else 0.02
+
+    def make_lsd_profile(self, modname='t1500g1000f8', savedir=None,
                          plot_deltaspec=False, plot_lsd_profiles=True, plot_deviation_map=True):
         '''Calculate the LSD profile for a given spectrum.
 
@@ -259,6 +275,9 @@ class DopplerImaging():
         
         '''
         # Read daospec linelist
+        line_file = paths.data / f'linelists/linbroad_{modname}_edited.clineslsd'
+        cont_file = paths.data / f'linelists/linbroad_{modname}C.fits'
+
         lineloc, lineew, _ = lsd.dao_getlines(line_file)
         pspec_cont = fits.getdata(cont_file)
         hdr_pspec_cont = fits.getheader(cont_file)
@@ -414,10 +433,13 @@ class DopplerImaging():
         self.metric, self.chisq, self.entropy = self.dime.entropy_map_norm_sp(self.bestparams, retvals=True)
         print(f"metric: {self.metric:.2f}, chisq: {self.chisq:.2f}, entropy: {self.entropy:.2f}")
 
+        self.model_observation = self.dime.normalize_model(np.dot(self.bestparams, self.Rmatrix))
+        
         self.bestparams[self.uncovered] = np.nan # set completely uncovered cells to nan
         bestparams2d = self.reshape_map_to_grid() # update self.bestparamgrid
         self.bestparamgrid = np.roll(np.flip(bestparams2d, axis=1), 
                                      int(0.5*bestparams2d.shape[1]), axis=1)
+        
 
     def reshape_map_to_grid(self, plot_unstretched_map=False):
         '''Reshape a 1D map vector to a 2D grid.
@@ -741,7 +763,7 @@ class DopplerImaging():
         showmap.load(self.bestparamgrid_r)
         showmap.show(ax=ax, projection="moll", colorbar=colorbar)
 
-    def plot_fit_results(self, savedir=None):
+    def plot_fit_results_2d(self, savedir=None):
         '''Plot the observed and best-fit LP series.
 
         Parameters
@@ -750,14 +772,13 @@ class DopplerImaging():
                 Full path (include filename) to save the figure.
         '''
         obs_2d = np.reshape(self.observed_1d, (self.nobs, self.nk))
-        model_observation = self.dime.normalize_model(np.dot(self.bestparams, self.Rmatrix))
-        bestmodel_2d = np.reshape(model_observation, (self.nobs, self.nk))
+        bestmodel_2d = np.reshape(self.model_observation, (self.nobs, self.nk))
         flatmodel_2d = np.reshape(self.flatmodel, (self.nobs, self.nk))
 
         plt.figure(figsize=(7, 7))
         for i in range(self.nobs):
             plt.plot(self.dv, obs_2d[i] - 0.02*i, color='k', linewidth=1)
-            plt.plot(self.dv, bestmodel_2d[i] - 0.02*i, color='r', linewidth=1)
+            plt.plot(self.dv, bestmodel_2d[i] - 0.02*i, color='r', linewidth=2)
             plt.plot(self.dv, flatmodel_2d[i] - 0.02*i, '--', color='gray', linewidth=1)
         plt.legend(labels=['observed', 'best-fit', 'flat'], loc=4)
         plt.xlabel("velocity (km/s)")
@@ -786,9 +807,8 @@ class MaxEntropy():
         self.weights = weights
         self.Rmatrix = Rmatrix
 
-    # The SciPy way:
     def nentropy(self, x):
-        """ Compute Normalized Entropy, Sum(y * ln(y)), where y_i = x_i/sum(x)"""
+        """Compute Normalized Entropy, Sum(y * ln(y)), where y_i = x_i/sum(x)"""
         # 2013-08-07 21:18 IJMC: Created
         norm_x = x / np.sum(x)
         entropy = -np.sum(norm_x * np.log(norm_x))
@@ -825,10 +845,11 @@ class MaxEntropy():
         return 0.5 * dchi - self.alpha * ds
 
     def entropy_map_norm_sp(self, map_pixels, retvals=False):
+        ''' Compute the entropy of the map.'''
         if (map_pixels<=0).any():
             map_pixels[map_pixels<=0] = 1e-6 #EB: if any pixel values are negative, set to 1e-6 (vv small basically zero)
         entropy = self.nentropy(map_pixels) #EB: call function 'nentropy' to calculate the mormalised entropy
-        model = np.dot(map_pixels.ravel(), self.Rmatrix)
+        model = np.dot(map_pixels, self.Rmatrix)
         norm_model = self.normalize_model(model) #call function 'normalize_model' to normalise the model (basically model/normalising function)
         chisq = (self.weights * (norm_model - self.data)**2).sum() # EB: changed method of finding chi squared from calling function to calculating directly
         metric = 0.5 * chisq - self.alpha * entropy
@@ -842,7 +863,7 @@ class MaxEntropy():
 ##### Utils ################################################################################################
 ############################################################################################################
 
-def load_data(model_datafile, goodchips, instru='IGRINS', pad=100):
+def load_data_from_pickle(model_datafile, goodchips, instru='IGRINS', pad=100):
     '''Load model and data from a pickle file.'''
 
     with open(model_datafile, "rb") as f:
@@ -891,11 +912,7 @@ def load_data(model_datafile, goodchips, instru='IGRINS', pad=100):
                     data["chipmodnobroad"][k][jj] / data["chipcors"][k][jj],
                 )
 
-    # Trim the edges of spectrum
-    wav_nm = lams[goodchips, pad:-pad] * 1000 # um to nm
-    observed = observed[:, :, pad:-pad]
-    template = template[:, :, pad:-pad]
-    error = error[:, :, pad:-pad]
+    wav_nm = lams[goodchips] * 1000 # um to nm
 
     print("observed:", observed.shape)
     print("template:", template.shape)
@@ -1074,7 +1091,7 @@ def make_fakemap(maptype, contrast,
 def simulate_data(fakemap, mean_spectrum, wav_nm, flux_err,
                 kwargs_sim, savedir=None, 
                 smoothing=0.1, cmap=plt.cm.plasma,
-                plot_ts=False, plot_IC14=True, colorbar=True):
+                plot_ts=False, custom_plot=True, colorbar=False):
     nobs = kwargs_sim['nt']
     nchip = wav_nm.shape[0]
     npix = wav_nm.shape[1]
@@ -1101,34 +1118,35 @@ def simulate_data(fakemap, mean_spectrum, wav_nm, flux_err,
     plot_map = starry.Map(lazy=False, **kwargs_sim)
     plot_map.load(fakemap)
 
-    if plot_IC14:
-        fig = plt.figure(figsize=(5,3))
-        ax2 = fig.add_subplot(111)
-        image = plot_map.render(projection="moll")
-        im = ax2.imshow(image, cmap=cmap, aspect=0.5, origin="lower", interpolation="nearest")
-        ax2.axis("off")
-        if colorbar:
-            fig.colorbar(im, ax=ax2, fraction=0.023, pad=0.045)
-        ax = fig.add_subplot(111, projection='mollweide')
-        ax.patch.set_alpha(0)
-        yticks = np.linspace(-np.pi/2, np.pi/2, 7)[1:-1]
-        xticks = np.linspace(-np.pi, np.pi, 13)[1:-1]
-        ax.set_yticks(yticks, labels=[f'{deg:.0f}˚' for deg in yticks*180/np.pi], fontsize=7, alpha=0.5)
-        ax.set_xticks(xticks, labels=[f'{deg:.0f}˚' for deg in xticks*180/np.pi], fontsize=7, alpha=0.5)
-        if colorbar:
-            fig.colorbar(im, ax=ax, fraction=0.023, pad=0.04, alpha=0)
-        ax.grid('major', color='k', linewidth=0.25, alpha=0.7)
-        for item in ax.spines.values():
-            item.set_linewidth(1.2)
-    
-    else:
-        fig, ax = plt.subplots()
-        sim_map.show(ax=ax, projection="moll", colorbar=colorbar)
+    if savedir is not None:
+        if custom_plot:
+            fig = plt.figure(figsize=(5,3))
+            ax2 = fig.add_subplot(111)
+            image = plot_map.render(projection="moll")
+            im = ax2.imshow(image, cmap=cmap, aspect=0.5, origin="lower", interpolation="nearest")
+            ax2.axis("off")
+            if colorbar:
+                fig.colorbar(im, ax=ax2, fraction=0.023, pad=0.045)
+            ax = fig.add_subplot(111, projection='mollweide')
+            ax.patch.set_alpha(0)
+            yticks = np.linspace(-np.pi/2, np.pi/2, 7)[1:-1]
+            xticks = np.linspace(-np.pi, np.pi, 13)[1:-1]
+            ax.set_yticks(yticks, labels=[f'{deg:.0f}˚' for deg in yticks*180/np.pi], fontsize=7, alpha=0.5)
+            ax.set_xticks(xticks, labels=[f'{deg:.0f}˚' for deg in xticks*180/np.pi], fontsize=7, alpha=0.5)
+            if colorbar:
+                fig.colorbar(im, ax=ax, fraction=0.023, pad=0.04, alpha=0)
+            ax.grid('major', color='k', linewidth=0.25, alpha=0.7)
+            for item in ax.spines.values():
+                item.set_linewidth(1.2)
+        
+        else:
+            fig, ax = plt.subplots()
+            sim_map.show(ax=ax, projection="moll", colorbar=colorbar)
 
-    plt.savefig(paths.figures / f"{savedir}/fakemap.png", bbox_inches="tight", dpi=100, transparent=True)
+        plt.savefig(savedir, bbox_inches="tight", dpi=100, transparent=True)
 
-    if plot_ts:
-        plot_timeseries(sim_map, model_flux, kwargs_sim["theta"], obsflux=simulated_flux[-1], overlap=2)
+        if plot_ts:
+            plot_timeseries(sim_map, model_flux, kwargs_sim["theta"], obsflux=simulated_flux[:,-1,:], overlap=2)
 
     return simulated_flux
 

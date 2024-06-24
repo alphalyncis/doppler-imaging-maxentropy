@@ -2,17 +2,20 @@ import numpy as np
 import paths
 import os
 
-from dime import *
+from dime import DopplerImaging, load_data_from_pickle, make_fakemap, simulate_data
+from config import load_config
 
-##############################################################################
-####################    Configs     ##########################################
-##############################################################################
+instru = "IGRINS"
+target = "W1049B"
+band = "K"
+params_starry, params_run, goodchips, modelspec = load_config(instru, target, band, sim=True)
 
-from config_sim import *
 
 maptype = "2spot"
 savedir = "sim_2spot"
 contrast = 0.8
+model_datafile = paths.data / f"{instru}_{target}_{band}_{modelspec}.pickle"
+goodchips = [1,2,3,4]
 
 if not os.path.exists(paths.figures / savedir):
     os.makedirs(paths.figures / savedir)
@@ -21,35 +24,26 @@ if not os.path.exists(paths.figures / savedir):
 ####################      Sim!      ##########################################
 ##############################################################################
 
-assert simulation_on == True
 
 # Load data from fit pickle
-wav_nm, template, observed, error = load_data(model_datafile, goodchips)
+wav_nm, template, _, error = load_data_from_pickle(model_datafile, goodchips)
+
+flux_err = eval(f'{np.median(error):.3f}')
 
 # Make mock observed spectra
 fakemap = make_fakemap(maptype, contrast, 
-    lat_deg=0, lon_deg=90, r1_deg=25, lat1_deg=45, lon1_deg=-60)
+    r_deg=33, lat_deg=0, lon_deg=90, 
+    r1_deg=25, lat1_deg=45, lon1_deg=-60)
 
 mean_spectrum = np.median(template, axis=0)
-observed = simulate_data(fakemap, mean_spectrum, wav_nm, flux_err, kwargs_sim)
+observed = simulate_data(fakemap, mean_spectrum, wav_nm, flux_err, params_starry, 
+                         plot_ts=True, custom_plot=False,
+                         savedir=paths.figures/f"{savedir}/fakemap.png")
 
-# Compute LSD mean profile
-#intrinsic_profiles, obskerns_norm = make_LSD_profile(instru, template, observed, wav_nm, goodchips, pmod, line_file, cont_file, nk, 
-#                                                   vsini, rv, period, timestamp, savedir, cut=cut)
+map_sim = DopplerImaging(wav_nm, goodchips, params_run)
+map_sim.load_data(observed, template, error)
+map_sim.make_lsd_profile(modelspec, plot_lsd_profiles=False, plot_deviation_map=False)
+map_sim.solve(create_obs_from_diff=True, solver='scipy')
+map_sim.plot_mollweide_map(vmin=85, vmax=110, savedir=paths.figures/f"{savedir}/solver1.png")
 
-#bestparamgrid_r, bestparamgrid = solve_IC14new(intrinsic_profiles, obskerns_norm, kwargs_IC14, kwargs_fig, annotate=False, colorbar=False)
-
-
-#plot_IC14_map(bestparamgrid_r, colorbar=False, vmin=85, vmax=110) # derotated
-#plt.savefig(paths.figures / f"{kwargs_fig['savedir']}/solver1.png", bbox_inches="tight", dpi=100, transparent=True)
-
-#LSDlin_map = solve_LSD_starry_lin(intrinsic_profiles, obskerns_norm, kwargs_run, kwargs_fig, annotate=False, colorbar=False)
-
-#LSDopt_map = solve_LSD_starry_opt(intrinsic_profiles, obskerns_norm, kwargs_run, kwargs_fig, lr=lr_LSD, niter=niter_LSD, annotate=False, colorbar=False)
-
-#lin_map = solve_starry_lin(mean_spectrum, observed, wav_nm, wav0_nm, kwargs_run, kwargs_fig, annotate=False, colorbar=False)
-#plt.figure(figsize=(5,3))
-#plt.savefig(paths.figures / f"{savedir}/solver4.pdf", bbox_inches="tight", dpi=300)
-
-#opt_map = solve_starry_opt(mean_spectrum, observed, wav_nm, wav0_nm, kwargs_run, kwargs_fig, lr=lr, niter=niter, annotate=False, colorbar=False)
-
+map_sim.plot_fit_results_2d()
