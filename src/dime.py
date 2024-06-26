@@ -196,7 +196,7 @@ class DopplerImaging():
         self.modkerns   = np.zeros((self.nobs, self.nchip, self.nk), dtype=float) # unbroaded model profiles
         self.err_LSD_profiles = np.empty((), dtype=float)
         self.obskerns_norm = np.zeros_like(self.kerns)
-        self.uniform_profiles   = np.zeros((self.nchip, self.nk), dtype=float) # is avged obskerns over time
+        self.timeav_profiles   = np.zeros((self.nchip, self.nk), dtype=float) # is avged obskerns over time
         self.intrinsic_profiles = np.zeros((self.nchip, self.nk), dtype=float) # is avged modkerns over time
 
         ### Maximum entropy inversion parameters ###
@@ -219,6 +219,8 @@ class DopplerImaging():
         self.flatguess = 100 * np.ones(self.ncell)
         self.flatmodel = None
         self.bounds = [(1e-6, 300)] * self.ncell
+        self.observed_1d = None
+        self.observed_1d_sc = None
 
         ### Set up the R matrix
         self.Rmatrix = np.zeros((self.ncell, self.nobs*self.dv.size), dtype=np.float32)
@@ -246,7 +248,7 @@ class DopplerImaging():
         #self.timestamps = timestamps #TODO: add timesteps to the data
         self.flux_err = eval(f'{np.median(self.error):.3f}') if self.instru == "IGRINS" else 0.02
 
-    def make_lsd_profile(self, modname='t1500g1000f8', savedir=None,
+    def make_lsd_profile(self, modname='t1500g1000f8', savedir=None, shiftmods=False, shiftkerns=False,
                          plot_deltaspec=False, plot_lsd_profiles=True, plot_deviation_map=True):
         '''Calculate the LSD profile for a given spectrum.
 
@@ -304,21 +306,21 @@ class DopplerImaging():
                 plt.savefig(f'{savedir}/deltaspec.png', bbox_inches="tight", dpi=150, transparent=True)
 
         # Shift kerns to center
-        self.modkerns, self.kerns = self.shift_kerns_to_center(shiftkerns=False)
+        self.modkerns, self.kerns = self.shift_kerns_to_center(shiftkerns=shiftkerns, shiftmods=shiftmods)
     
         # Normalize kerns
         self.obskerns_norm = self.cont_normalize_kerns()
 
-        self.uniform_profiles = np.array([self.obskerns_norm[:,c].mean(axis=0) for c in range(self.nchip)])
+        self.timeav_profiles = np.array([self.obskerns_norm[:,c].mean(axis=0) for c in range(self.nchip)])
         self.intrinsic_profiles = np.array([self.modkerns[:,c].mean(axis=0) for c in range(self.nchip)])
 
         if plot_lsd_profiles:
-            self.plot_lp_timeseries(self.obskerns_norm, self.timestamps)
+            self.plot_lp_timeseries()
             if savedir is not None:
                 plt.savefig(f'{savedir}/LSD_profiles.png', bbox_inches="tight", dpi=150, transparent=True)
 
         if plot_deviation_map:
-            self.plot_deviation_map(self.obskerns_norm, self.timestamps)
+            self.plot_deviation_map(self.obskerns_norm)
             if savedir is not None:
                 plt.savefig(f'{savedir}/deviation_map.png', bbox_inches="tight", dpi=150, transparent=True)
 
@@ -402,7 +404,7 @@ class DopplerImaging():
         self.flatmodel = self.dime.normalize_model(np.dot(self.flatguess, self.Rmatrix))
         if create_obs_from_diff:
             mean_dev = np.median(np.array(
-                [self.obskerns_norm[:,c] - self.uniform_profiles[c] for c in range(self.nchip)]
+                [self.obskerns_norm[:,c] - self.timeav_profiles[c] for c in range(self.nchip)]
             ), axis=0) # mean deviation over chips
             flatmodel_2d = np.reshape(self.flatmodel, (self.nobs, self.nk))
             new_observation_2d = mean_dev + flatmodel_2d
@@ -411,12 +413,12 @@ class DopplerImaging():
 
         ### Scale the observations to match the model's linear trend and offset
         linfunc = lambda x, c0, c1: x * c0 + c1
-        coeff, cov = opt.curve_fit(linfunc, xdata=self.observed_1d, ydata=self.flatmodel, 
-                                    sigma=self.weights, absolute_sigma=True, p0=[1, 0])
-        self.observed_1d = linfunc(self.observed_1d, *coeff)
+        coeff, cov = opt.curve_fit(linfunc, xdata=self.observed_1d, ydata=self.flatmodel, p0=[1, 0])
+        print(f"coeff: {coeff}")
+        self.observed_1d_sc = linfunc(self.observed_1d, *coeff)
 
         ### Solve!
-        self.dime.set_data(self.observed_1d, self.weights, self.Rmatrix)
+        self.dime.set_data(self.observed_1d_sc, self.weights, self.Rmatrix)
         
         if solver == 'ic14':
             bfit = mf.gfit(self.dime.entropy_map_norm_sp, self.flatguess, fprime=self.dime.getgrad_norm_sp, 
@@ -484,21 +486,21 @@ class DopplerImaging():
 
         return bestparams2d
 
-    def shift_kerns_to_center(self, sim=False, shiftkerns=True, verbose=False):
+    def shift_kerns_to_center(self, sim=False, shiftmods=False, shiftkerns=False, verbose=True):
         '''shift modkerns to center at dv=0 and shift kerns for same amount.'''
-        cen_modkerns = np.zeros_like(self.modkerns)
+        cen_modkerns = np.copy(self.modkerns)
         cen_kerns = np.copy(self.kerns)
         for i,jj in enumerate(self.goodchips):
             for k in range(self.nobs):
                 # find systematic rv offset from modkerns
                 systematic_rv_offset = (self.modkerns[k,i]==self.modkerns[k,i].max()).nonzero()[0][0] - (self.dv==0).nonzero()[0][0]
-                # shift modkerns to center at dv=0
-                cen_modkerns[k,i] = np.interp(np.arange(self.nk), np.arange(self.nk) - systematic_rv_offset, self.modkerns[k,i])
-                if verbose:
+                if shiftmods:
+                    # shift modkerns to center at dv=0
+                    cen_modkerns[k,i] = np.interp(np.arange(self.nk), np.arange(self.nk) - systematic_rv_offset, self.modkerns[k,i])
                     if (k == 0) and verbose:
                         print("modkerns shifted to center.")
-                # shift kerns with same amount, if not sim or crires
                 if shiftkerns and (not sim) and (self.instru != 'CRIRES'): 
+                    # shift kerns with same amount, if not sim or crires
                     cen_kerns[k,i] = np.interp(np.arange(self.nk), np.arange(self.nk) - systematic_rv_offset, self.kerns[k,i])
                     if (k == 0) and verbose:
                         print("kerns shifted to same amount.")
@@ -543,7 +545,7 @@ class DopplerImaging():
         if savedir is not None:
             plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
 
-    def plot_lp_timeseries_all(self, line_profiles, intrinsic_profiles=None, savedir=None, gap=0.03):
+    def plot_lp_timeseries_all(self, savedir=None, gap=0.03):
         '''Plot time series of line profiles of each order.
 
         Parameters
@@ -555,21 +557,21 @@ class DopplerImaging():
             gap: float
                 Gap between each line profile.
         '''
+        line_profiles = self.obskerns_norm
         colors = [plt.cm.gnuplot_r(x) for x in np.linspace(0, 1, self.nobs+4)]
         plt.figure(figsize=(self.nchip*3, 4))
         for i, jj in enumerate(self.goodchips):
             plt.subplot(1, self.nchip, i+1)
             for n in range(self.nobs):
                 plt.plot(self.dv, line_profiles[n,i] - gap*n, color=colors[n])
-            if intrinsic_profiles is not None:
-                plt.plot(self.dv, 1-intrinsic_profiles[i], color='k')
+            plt.plot(self.dv, 1 - self.intrinsic_profiles[i], color='k')
             plt.title(f"chip={jj}")
             plt.xlabel("dv")
         plt.tight_layout()
         if savedir is not None:
             plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
 
-    def plot_lp_timeseries(self, line_profiles, timestamps, savedir=None, gap=0.025):
+    def plot_lp_timeseries(self, savedir=None, gap=0.025):
         '''Plot time series of order-averaged line profiles.
 
         Parameters
@@ -581,25 +583,26 @@ class DopplerImaging():
             gap: float
                 Gap between each line profile.
         '''
+        line_profiles = self.obskerns_norm
         colors = [plt.cm.gnuplot_r(x) for x in np.linspace(0, 1, self.nobs+4)]
         fig, ax = plt.subplots(figsize=(4, 5))
         cut = int((self.nk - 70) / 2 + 1.)
-        for n in range(self.nobs):
-            ax.plot(self.dv[cut:-cut], line_profiles.mean(axis=0).mean(axis=0)[cut:-cut] - gap*n, "--", color="gray", alpha=0.5)
-            ax.plot(self.dv[cut:-cut], line_profiles[n].mean(axis=0)[cut:-cut] - gap*n, color=colors[n+1])
+        for t in range(self.nobs):
+            ax.plot(self.dv[cut:-cut], line_profiles.mean(axis=0).mean(axis=0)[cut:-cut] - gap*t, "--", color="gray", alpha=0.5)
+            ax.plot(self.dv[cut:-cut], line_profiles[t].mean(axis=0)[cut:-cut] - gap*t, color=colors[t+1])
         ax.set_xlabel("velocity (km/s)")
         ax.set_xticks([-50, -25, 0, 25, 50])
         ax.set_ylabel("Line intensity")
         ax2 = ax.twinx()
         ax2.set_ylim(ax.get_ybound())
-        ax2.set_yticks([1 - gap*n for n in range(self.nobs)], labels=[f"{t:.1f}h" for t in timestamps], fontsize=9)
+        ax2.set_yticks([1 - gap*t for t in range(self.nobs)], labels=[f"{t:.1f}h" for t in self.timestamps], fontsize=9)
         #plt.axvline(x=vsini/1e3, color="k", linestyle="dashed", linewidth=1)
         #plt.axvline(x=-vsini/1e3, color="k", linestyle="dashed", linewidth=1)
         #plt.legend(loc=4, bbox_to_anchor=(1,1))
         if savedir is not None:
             plt.savefig(savedir, bbox_inches="tight", dpi=200, transparent=True)
 
-    def plot_deviation_map_all(self, line_profiles, timestamps, savedir=None, lim=0.003):
+    def plot_deviation_map_all(self, savedir=None, lim=0.003):
         '''Plot deviation map for each order. 
         A darker deviation pattern means a surface feature fainter than the background.
         
@@ -612,17 +615,18 @@ class DopplerImaging():
             savedir: str
                 Full path (include filename) to save the figure.
         '''
-        uniform_profiles = np.zeros((self.nchip, self.nk))
         ratio = 1.3 if self.nobs < 10 else 0.7
+        timeav_profiles = np.zeros((self.nchip, self.nk))
+        line_profiles = self.obskerns_norm
 
         # plot deviation map for each chip
         plt.figure(figsize=(self.nchip*4, 3))
         for i, jj in enumerate(self.goodchips):
-            uniform_profiles[i] = line_profiles[:,i].mean(axis=0) # averaged LP over times
-            #TODO: change uniform_profiles to median
+            timeav_profiles[i] = line_profiles[:,i].mean(axis=0) # averaged LP over times
+            #TODO: change timeav_profiles to median
             plt.subplot(1, self.nchip, i+1)
-            plt.imshow(line_profiles[:,i] - uniform_profiles[i], 
-                extent=(self.dv.max(), self.dv.min(), timestamps[-1], 0),
+            plt.imshow(line_profiles[:,i] - timeav_profiles[i], 
+                extent=(self.dv.max(), self.dv.min(), self.timestamps[-1], 0),
                 aspect=int(ratio * 29),
                 cmap='YlOrBr') # positive diff means dark spot
             cut = self.nk - 70 if self.nk > 70 else 0
@@ -634,17 +638,13 @@ class DopplerImaging():
         if savedir is not None:
             plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
     
-    def plot_deviation_map(self, line_profiles, timestamps, savedir=None, meanby='median', 
-                           colorbar=True, lim=0.003):
+    def plot_deviation_map(self, line_profiles, savedir=None, colorbar=False, 
+                           lim=0.003, figsize=(10,6), aspect=29):
         '''Plot order-averaged deviation map.
         A darker deviation pattern means a surface feature fainter than the background.
 
         Parameters
         ----------
-            line_profiles: 3darray, shape=(nobs, nchip, nk)
-
-            timestamps: 1darray, shape=(nobs)
-
             savedir: str
                 Full path (include filename) to save the figure.
             meanby: str
@@ -655,16 +655,13 @@ class DopplerImaging():
         '''
         ratio = 1.3 if self.nobs < 10 else 0.7
 
-        if meanby == "median":
-            mean_dev = np.median(np.array([line_profiles[:,i] - self.uniform_profiles[i] for i in range(self.nchip)]), axis=0) # mean over chips
-        elif meanby == "median_each":
-            mean_dev = np.median(line_profiles, axis=1) - np.median(self.uniform_profiles,axis=0)
-        elif meanby == "mean":
-            mean_dev = np.mean(np.array([line_profiles[:,i] - self.uniform_profiles[i] for i in range(self.nchip)]), axis=0) # mean over chips
-        plt.figure(figsize=(10,6))
+        mean_dev = np.median(np.array(
+            [line_profiles[:,i] - self.timeav_profiles[i] for i in range(self.nchip)]
+        ), axis=0) # mean over chips
+        plt.figure(figsize=figsize)
         plt.imshow(mean_dev, 
-            extent=(self.dv.max(), self.dv.min(), timestamps[-1], 0),
-            aspect=int(ratio * 29),
+            extent=(self.dv.max(), self.dv.min(), self.timestamps[-1], 0),
+            aspect=int(ratio * aspect),
             cmap='YlOrBr',
             vmin=-lim, vmax=lim) # positive diff means dark spot
         cut = self.nk - 70 if self.nk > 70 else 0
@@ -672,9 +669,9 @@ class DopplerImaging():
         plt.xlabel("velocity (km/s)", fontsize=8)
         plt.xticks([-50, -25, 0, 25, 50], fontsize=8)
         plt.ylabel("Elapsed time (h)", fontsize=8)
-        plt.yticks([0, 1, 2, 3, 4, 5], fontsize=8)
-        plt.vlines(x=self.vsini/1e3, ymin=0, ymax=timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
-        plt.vlines(x=-self.vsini/1e3, ymin=0, ymax=timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
+        plt.yticks(np.unique([int(i) for i in self.timestamps]), fontsize=8)
+        plt.vlines(x=self.vsini/1e3, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
+        plt.vlines(x=-self.vsini/1e3, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
         if colorbar:
             cb = plt.colorbar(fraction=0.06, pad=0.28, aspect=15, orientation="horizontal", label="%")
             cb_ticks = cb.ax.get_xticks()
@@ -683,6 +680,45 @@ class DopplerImaging():
         plt.tight_layout()
         if savedir is not None:
             plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
+
+    def plot_deviation_modelmap(self, savedir=None, colorbar=False, 
+                           lim=0.003, figsize=(10,6), aspect=29):
+        '''Plot order-averaged deviation map of the best-fit model map.
+        A darker deviation pattern means a surface feature fainter than the background.
+
+        Parameters
+        ----------
+            savedir: str
+                Full path (include filename) to save the figure.
+        '''
+        ratio = 1.3 if self.nobs < 10 else 0.7
+
+        mean_dev = np.median(np.array(
+            [self.obskerns_norm[:,i] - self.timeav_profiles[i] for i in range(self.nchip)]
+        ), axis=0) # mean over chips
+        plt.figure(figsize=figsize)
+        plt.imshow(mean_dev, 
+            extent=(self.dv.max(), self.dv.min(), self.timestamps[-1], 0),
+            aspect=int(ratio * aspect),
+            cmap='YlOrBr',
+            vmin=-lim, vmax=lim) # positive diff means dark spot
+        cut = self.nk - 70 if self.nk > 70 else 0
+        plt.xlim(self.dv.min() + cut, self.dv.max() - cut),
+        plt.xlabel("velocity (km/s)", fontsize=8)
+        plt.xticks([-50, -25, 0, 25, 50], fontsize=8)
+        plt.ylabel("Elapsed time (h)", fontsize=8)
+        plt.yticks(np.unique([int(i) for i in self.timestamps]), fontsize=8)
+        plt.vlines(x=self.vsini/1e3, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
+        plt.vlines(x=-self.vsini/1e3, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
+        if colorbar:
+            cb = plt.colorbar(fraction=0.06, pad=0.28, aspect=15, orientation="horizontal", label="%")
+            cb_ticks = cb.ax.get_xticks()
+            cb.ax.set_xticklabels([f"{t*100:.1f}" for t in cb_ticks])
+            cb.ax.tick_params(labelsize=8)
+        plt.tight_layout()
+        if savedir is not None:
+            plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
+
 
     def plot_mollweide_map(self, clevel=5, sigma=1, colorbar=False, vmax=None, vmin=None, 
                            colormap=plt.cm.plasma, contour=False, savedir=None, annotate=False):
@@ -763,7 +799,7 @@ class DopplerImaging():
         showmap.load(self.bestparamgrid_r)
         showmap.show(ax=ax, projection="moll", colorbar=colorbar)
 
-    def plot_fit_results_2d(self, savedir=None):
+    def plot_fit_results_2d(self, dev_only=True, savedir=None, gap=0.02):
         '''Plot the observed and best-fit LP series.
 
         Parameters
@@ -771,16 +807,23 @@ class DopplerImaging():
             savedir: str
                 Full path (include filename) to save the figure.
         '''
-        obs_2d = np.reshape(self.observed_1d, (self.nobs, self.nk))
+        obs_2d = np.reshape(self.observed_1d_sc, (self.nobs, self.nk))
         bestmodel_2d = np.reshape(self.model_observation, (self.nobs, self.nk))
         flatmodel_2d = np.reshape(self.flatmodel, (self.nobs, self.nk))
 
-        plt.figure(figsize=(7, 7))
+        cut = int((self.nk - 70) / 2 + 10.)
+        plt.figure(figsize=(5, 7))
         for i in range(self.nobs):
-            plt.plot(self.dv, obs_2d[i] - 0.02*i, color='k', linewidth=1)
-            plt.plot(self.dv, bestmodel_2d[i] - 0.02*i, color='r', linewidth=2)
-            plt.plot(self.dv, flatmodel_2d[i] - 0.02*i, '--', color='gray', linewidth=1)
-        plt.legend(labels=['observed', 'best-fit', 'flat'], loc=4)
+            if dev_only:
+                plt.plot(self.dv[cut:-cut], obs_2d[i][cut:-cut] - flatmodel_2d[i][cut:-cut] - gap*i, color='k', linewidth=1, label="observed")
+                plt.plot(self.dv[cut:-cut], bestmodel_2d[i][cut:-cut] - flatmodel_2d[i][cut:-cut] - gap*i, color='r', linewidth=1, label="best-fit")
+                plt.plot(self.dv[cut:-cut], flatmodel_2d[i][cut:-cut] - flatmodel_2d[i][cut:-cut] - gap*i, '--', color='gray', linewidth=1, label="flatmap")
+            else:
+                plt.plot(self.dv[cut:-cut], obs_2d[i][cut:-cut] - gap*i, color='k', linewidth=1, label="observed")
+                plt.plot(self.dv[cut:-cut], bestmodel_2d[i][cut:-cut] - gap*i, color='r', linewidth=1, label="best-fit")
+                plt.plot(self.dv[cut:-cut], flatmodel_2d[i][cut:-cut] - gap*i, '--', color='gray', linewidth=1, label="flatmap")
+            if i==0:
+                plt.legend(loc=4)
         plt.xlabel("velocity (km/s)")
 
         if savedir is not None:
@@ -873,7 +916,6 @@ def load_data_from_pickle(model_datafile, goodchips, instru='IGRINS', pad=100):
     npix = data['fobs0'].shape[2]
     nchip = len(goodchips)
     print(f"Data loaded from file {model_datafile}.")
-    print(f"nobs: {nobs}, nchip: {nchip}, npix: {npix}")
 
     observed = np.empty((nobs, nchip, npix))
     template = np.empty((nobs, nchip, npix))
@@ -913,6 +955,13 @@ def load_data_from_pickle(model_datafile, goodchips, instru='IGRINS', pad=100):
                 )
 
     wav_nm = lams[goodchips] * 1000 # um to nm
+
+    # trim the edges of the spectrum
+    observed = observed[:, :, pad:-pad]
+    template = template[:, :, pad:-pad]
+    error = error[:, :, pad:-pad]
+    wav_nm = wav_nm[:, pad:-pad]
+
 
     print("observed:", observed.shape)
     print("template:", template.shape)

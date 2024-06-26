@@ -1,5 +1,6 @@
 import paths
 import os
+import numpy as np
 from dime import DopplerImaging, load_data_from_pickle
 from config import load_config
 
@@ -22,15 +23,15 @@ if not os.path.exists(paths.figures/savedir):
 # Load data from pickle fit
 wav_nm, template, observed, error = load_data_from_pickle(model_datafile, goodchips)
 
-mapB_H = DopplerImaging(wav_nm, goodchips, params_dict=params)
-mapB_H.load_data(observed, template, error)
-mapB_H.make_lsd_profile(modelspec, plot_lsd_profiles=True, plot_deviation_map=False)
-mapB_H.solve(create_obs_from_diff=True, solver='scipy')
+dmap = DopplerImaging(wav_nm, goodchips, params_dict=params)
+dmap.load_data(observed, template, error)
+dmap.make_lsd_profile(modelspec, plot_lsd_profiles=True, plot_deviation_map=True)
+dmap.solve(create_obs_from_diff=True, solver='scipy')
 
 
-mapB_H.plot_mollweide_map(vmin=85, vmax=110, savedir=paths.figures/f"{savedir}/solver1.png")
+dmap.plot_mollweide_map(vmin=85, vmax=110, savedir=paths.figures/f"{savedir}/solver1.png")
 
-mapB_H.plot_fit_results_2d()
+dmap.plot_fit_results_2d(gap=0.01)
 
 
 
