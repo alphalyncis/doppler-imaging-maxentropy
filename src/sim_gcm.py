@@ -1,116 +1,20 @@
-from doppler_imaging import *
 import numpy as np
 import paths
+import os
+
+from dime import DopplerImaging, load_data_from_pickle, make_fakemap, simulate_data
+from config import load_config
 
 ##############################################################################
 ####################    Configs     ##########################################
 ##############################################################################
 
-from config_sim import *
 modelmap = "gcm"
 ydeg_sim = 25
 savedir = "sim_gcm"
 
 contrast = 0.7
-noisetype = "random"
 
-#################### Automatic ####################################
-
-if True:
-    # Auto consistent options
-    cut = nk - 70
-    if map_type == "eqarea":
-        use_eqarea = True
-        
-    if not os.path.exists(paths.figures / savedir):
-        os.makedirs(paths.figures / savedir)
-
-    nobs = nobss[target]
-
-    # set chips to include
-    goodchips = goodchips_sim[instru][target][band]
-    if use_toy_spec:
-        goodchips = [4]
-    nchip = len(goodchips)
-
-    # set model files to use
-    if "t1" in modelspec:
-        if instru == "CRIRES": #TODO: put CRIRES data here
-            model_datafiles = {"W1049B": 'fainterspectral-fits_6.pickle', "W1049A":'brighterspectral-fits_6.pickle'}
-            model_datafile = model_datafiles[target]
-        else:
-            model_datafile = paths.data / f'{instru}_{target}_{band}_{modelspec}.pickle'
-        pmod = f'linbroad_{modelspec}'
-        rv = rvs[target]
-        if use_toy_spec:
-            print("Using toy spectrum...")
-            pmod = f'toy_{modelspec}'
-            rv = 0
-
-    elif "lte" in modelspec: #TODO: shall I just delete this option
-        if instru == "CRIRES":
-            model_datafiles = {"W1049B": 'fainterspectral-fits_6.pickle', "W1049A":'brighterspectral-fits_6.pickle'}
-            model_datafile = model_datafiles[target]
-        else:
-            model_datafile = paths.data / f'{instru}_{target}_{band}_{modelspec}.pickle'
-        pmod = 'linbroad_lte015'
-        rv = rvs[target]
-
-    line_file = paths.data / f'linelists/{pmod}_edited.clineslsd'
-    cont_file = paths.data / f'linelists/{pmod}C.fits'
-
-    # set solver parameters
-    period = periods[target]
-    inc = incs[target]
-    vsini = vsinis[target]
-    veq = vsini / np.sin(inc * np.pi / 180)
-
-    # set time and period parameters
-    timestamp = np.linspace(0, period, nobs)  # simulate equal time interval obs
-    phases = timestamp * 2 * np.pi / period # 0 ~ 2*pi in rad
-    theta = 360.0 * timestamp / period      # 0 ~ 360 in degree
-
-    assert nobs == len(theta)
-
-    kwargs_sim = dict(
-        ydeg=ydeg_sim,
-        udeg=udeg,
-        nc=nc,
-        veq=veq,
-        inc=inc,
-        nt=nobs,
-        vsini_max=vsini_max,
-        u1=u1,
-        theta=theta)
-
-    kwargs_run = kwargs_sim.copy()
-    kwargs_run['ydeg'] = ydeg
-
-    kwargs_IC14 = dict(
-        phases=phases, 
-        inc=inc, 
-        vsini=vsini, 
-        LLD=LLD, 
-        eqarea=use_eqarea, 
-        nlat=nlat, 
-        nlon=nlon,
-        alpha=alpha,
-        ftol=ftol
-    )
-
-    kwargs_fig = dict(
-        goodchips=goodchips,
-        noisetype=noisetype,
-        contrast=contrast,
-        savedir=savedir
-    )
-
-##############################################################################
-####################      Run!      ##########################################
-##############################################################################
-
-assert simulation_on == True
-assert savedir == "sim_gcm"
 
 # Load data from fit pickle
 mean_spectrum, template, observed, residual, error, wav_nm, wav0_nm = load_data(model_datafile, instru, nobs, goodchips)

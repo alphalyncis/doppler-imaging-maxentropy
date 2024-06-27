@@ -414,7 +414,6 @@ class DopplerImaging():
         ### Scale the observations to match the model's linear trend and offset
         linfunc = lambda x, c0, c1: x * c0 + c1
         coeff, cov = opt.curve_fit(linfunc, xdata=self.observed_1d, ydata=self.flatmodel, p0=[1, 0])
-        print(f"coeff: {coeff}")
         self.observed_1d_sc = linfunc(self.observed_1d, *coeff)
 
         ### Solve!
@@ -486,7 +485,7 @@ class DopplerImaging():
 
         return bestparams2d
 
-    def shift_kerns_to_center(self, sim=False, shiftmods=False, shiftkerns=False, verbose=True):
+    def shift_kerns_to_center(self, sim=False, shiftmods=False, shiftkerns=False, verbose=False):
         '''shift modkerns to center at dv=0 and shift kerns for same amount.'''
         cen_modkerns = np.copy(self.modkerns)
         cen_kerns = np.copy(self.kerns)
