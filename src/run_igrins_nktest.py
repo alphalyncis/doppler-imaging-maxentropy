@@ -8,8 +8,8 @@ from config import load_config
 from scipy.signal import savgol_filter
 
 instru = "IGRINS"
-target = "W1049A_0209"
-band = "H"
+target = "W1049B"
+band = "K"
 savedir = f"nktest_{instru}_{band}_{target}"
 
 params, goodchips, modelspec = load_config(instru, target, band)
