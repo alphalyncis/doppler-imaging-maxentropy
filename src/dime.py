@@ -798,7 +798,7 @@ class DopplerImaging():
         showmap.load(self.bestparamgrid_r)
         showmap.show(ax=ax, projection="moll", colorbar=colorbar)
 
-    def plot_fit_results_2d(self, dev_only=True, savedir=None, gap=0.02):
+    def plot_fit_results_2d(self, dev_only=False, savedir=None, gap=0.02):
         '''Plot the observed and best-fit LP series.
 
         Parameters

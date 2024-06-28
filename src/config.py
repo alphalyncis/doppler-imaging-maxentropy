@@ -172,8 +172,7 @@ def load_config(instru, target, band, sim=False):
         eqarea=use_eqarea, 
         nlat=nlat, 
         nlon=nlon,
-        alpha=alpha,
-        ftol=ftol
+        alpha=alpha
     )
 
     if sim:
