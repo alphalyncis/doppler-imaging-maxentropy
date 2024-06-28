@@ -1109,7 +1109,7 @@ def make_fakemap(maptype, contrast,
         diffnew = diff * amp / diff.max()
         fakemap = 1. - diffnew
         fakemap = np.roll(fakemap, shift=int(lon_deg), axis=1)
-        print(f"Created GCM map, original spot contrast = {(1-diff)*100:.0f}%.")
+        print(f"Created GCM map, original spot contrast = {(1-diff.max())*100:.0f}%.")
         print(f"Flux scaled to requested contrast = {contrast*100:.0f}%.")
         print(f"Spot aligned at lon={lon_deg}.")
 
@@ -1194,11 +1194,11 @@ def simulate_data(fakemap, mean_spectrum, wav_nm, flux_err,
         plt.savefig(savedir, bbox_inches="tight", dpi=100, transparent=True)
 
         if plot_ts:
-            plot_timeseries(sim_map, model_flux, kwargs_sim["theta"], obsflux=simulated_flux[:,-1,:], overlap=2)
+            plot_starry_timeseries(sim_map, model_flux, kwargs_sim["theta"], obsflux=simulated_flux[:,-1,:], overlap=2)
 
     return simulated_flux
 
-def plot_timeseries(map, modelspec, theta, obsflux=None, overlap=8.0, figsize=(5, 11.5)):
+def plot_starry_timeseries(map, modelspec, theta, obsflux=None, overlap=8.0, figsize=(5, 11.5)):
     # Plot the "Joy Division" graph
     fig = plt.figure(figsize=figsize)
     ax_img = [

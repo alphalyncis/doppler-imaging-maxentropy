@@ -10,10 +10,10 @@ target = "W1049B"
 band = "K"
 params_starry, params_run, goodchips, modelspec = load_config(instru, target, band, sim=True)
 model_datafile = paths.data / f"{instru}_{target}_{band}_{modelspec}.pickle"
-contrast = 0.7
-#goodchips = [1,2,3,4]
+contrast = 0.8
+goodchips = [1,2,3,4]
 
-for maptype in ["gcm"]:
+for maptype in ["1spot", "2spot"]:
     savedir = f"sim_{maptype}"
 
     if not os.path.exists(paths.figures / savedir):
@@ -28,7 +28,9 @@ for maptype in ["gcm"]:
     flux_err = eval(f'{np.median(error):.3f}')
 
     # Make mock observed spectra
-    fakemap = make_fakemap(maptype, contrast, lon_deg=90)
+    fakemap = make_fakemap(maptype, contrast, 
+        r_deg=33, lat_deg=0, lon_deg=90, 
+        r1_deg=25, lat1_deg=45, lon1_deg=-60)
 
     mean_spectrum = np.median(template, axis=0)
     observed = simulate_data(fakemap, mean_spectrum, wav_nm, flux_err, params_starry, 
