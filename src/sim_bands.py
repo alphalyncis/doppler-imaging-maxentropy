@@ -9,7 +9,7 @@ instru = "IGRINS"
 target = "W1049B"
 band = "K"
 params_starry, params_run, goodchips, modelspec = load_config(instru, target, band, sim=True)
-model_datafile = paths.data / f"{instru}_{target}_{band}_{modelspec}.pickle"
+model_datafile = paths.data / f"fitted/{instru}_{target}_{band}_{modelspec}.pickle"
 contrast = 0.8
 #goodchips = [1,2,3,4]
 

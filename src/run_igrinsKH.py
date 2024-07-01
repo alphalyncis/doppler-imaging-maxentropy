@@ -11,10 +11,10 @@ modelspecK = "t1500g1000f8"
 modelspecH = "t1500g1000f8"
 
 params, goodchipsH, modelspecH = load_config(instru, target, "H")
-model_datafileH = paths.data/f'{instru}_{target}_H_{modelspecH}.pickle'
+model_datafileH = paths.data/f'fitted/{instru}_{target}_H_{modelspecH}.pickle'
 
 params, goodchipsK, modelspecK = load_config(instru, target, "K")
-model_datafileK = paths.data/f'{instru}_{target}_K_{modelspecK}.pickle'
+model_datafileK = paths.data/f'fitted/{instru}_{target}_K_{modelspecK}.pickle'
 
 if not os.path.exists(paths.figures/savedir):
     os.makedirs(paths.figures/savedir)

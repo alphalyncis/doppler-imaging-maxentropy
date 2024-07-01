@@ -14,7 +14,7 @@ savedir = f"nktest_{instru}_{band}_{target}"
 
 params, goodchips, modelspec = load_config(instru, target, band)
 goodchips = np.arange(20)
-model_datafile = paths.data/f'{instru}_{target}_{band}_{modelspec}.pickle'
+model_datafile = paths.data/f'fitted/{instru}_{target}_{band}_{modelspec}.pickle'
 
 if not os.path.exists(paths.figures/savedir):
     os.makedirs(paths.figures/savedir)

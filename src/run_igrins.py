@@ -10,7 +10,7 @@ band = "H"
 savedir = f"{instru}_{band}_{target}"
 
 params, goodchips, modelspec = load_config(instru, target, band)
-model_datafile = paths.data/f'{instru}_{target}_{band}_{modelspec}.pickle'
+model_datafile = paths.data/f'fitted/{instru}_{target}_{band}_{modelspec}.pickle'
 #goodchips = [1,2,3,4]
 
 if not os.path.exists(paths.figures/savedir):
