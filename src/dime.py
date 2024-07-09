@@ -909,8 +909,8 @@ def load_data_from_pickle(model_datafile, goodchips, instru='IGRINS', pad=100):
     with open(model_datafile, "rb") as f:
         data = pickle.load(f, encoding="latin1")
     lams = np.median(data["chiplams"], axis=0) # in um
-    nobs = data['fobs0'].shape[0]
-    npix = data['fobs0'].shape[2]
+    nobs = data['chipmodnobroad'].shape[0]
+    npix = data['chipmodnobroad'].shape[2]
     nchip = len(goodchips)
     print(f"Data loaded from file {model_datafile}.")
 

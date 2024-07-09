@@ -7,13 +7,12 @@ from dime import DopplerImaging, load_data_from_pickle
 from config import load_config
 from scipy.signal import savgol_filter
 
-instru = "IGRINS"
+instru = "CRIRES"
 target = "W1049B"
 band = "K"
 savedir = f"nktest_{instru}_{band}_{target}"
 
 params, goodchips, modelspec = load_config(instru, target, band)
-goodchips = np.arange(20)
 model_datafile = paths.data/f'fitted/{instru}_{target}_{band}_{modelspec}.pickle'
 
 if not os.path.exists(paths.figures/savedir):
@@ -56,49 +55,28 @@ for nk in nks:
     std_LPs.append(noise)
 
 # Plot S/N of LPs
-plt.figure(figsize=(10,4))
+plt.figure(figsize=(5,4))
 
-ax1 = plt.subplot(1,2,1)
 snr_LPs = np.array(snr_LPs)
-for i in range(10):  
+for i in range(4):  
     plt.plot(nks, snr_LPs[:, i], marker=".")
 plt.xlabel("nk")
+plt.ylim(5, 35)
 #plt.axvline(linemark, color="k", linestyle="--", alpha=0.4)
 plt.ylabel("S/N of line profile")
-plt.text(0.75, 0.93, f"IGRINS {band}", fontsize=12, transform=plt.gca().transAxes)
-plt.legend(labels=[f"order {c+start}" for c in goodchips[:10]], fontsize=7, bbox_to_anchor=(1,1))
+plt.text(0.75, 0.93, f"{instru} {band}", fontsize=12, transform=plt.gca().transAxes)
+plt.legend(labels=[f"order {c+1}" for c in goodchips], fontsize=7, bbox_to_anchor=(1,1))
 
-plt.subplot(1,2,2, sharey=ax1)
-snr_LPs = np.array(snr_LPs)
-for i in range(10,20):  
-    plt.plot(nks, snr_LPs[:, i], marker=".")
-plt.xlabel("nk")
-plt.text(0.75, 0.93, f"IGRINS {band}", fontsize=12, transform=plt.gca().transAxes)
-#plt.axvline(linemark, color="k", linestyle="--", alpha=0.4)
-plt.legend(labels=[f"order {c+start}" for c in goodchips[10:]], fontsize=7, bbox_to_anchor=(1,1))
-
-plt.tight_layout()
 plt.savefig(paths.figures/f"{savedir}/snr_LPs.png", dpi=100, transparent=True)
 
 # Plot noise of LPs
-plt.figure(figsize=(10,4))
-plt.subplot(1,2,1)
+plt.figure(figsize=(5,4))
 std_LPs = np.array(std_LPs)
-for i in range(10):  
+for i in range(4):  
     plt.plot(nks, std_LPs[:, i], marker=".")
 plt.xlabel("nk")
 plt.ylabel("noise level of line profile")
-plt.legend(labels=[f"chip{c}" for c in goodchips[:10]], fontsize=8, bbox_to_anchor=(1,1))
-
-plt.subplot(1,2,2)
-std_LPs = np.array(std_LPs)
-for i in range(10,20):  
-    plt.plot(nks, std_LPs[:, i], marker=".")
-plt.xlabel("nk")
-plt.ylabel("noise level of line profile")
-plt.legend(labels=[f"chip{c}" for c in goodchips[10:]], fontsize=8, bbox_to_anchor=(1,1))
-plt.tight_layout()
-plt.savefig(paths.figures / f"{savedir}/noise_LPs.png", dpi=100, transparent=True)
+plt.legend(labels=[f"order {c+1}" for c in goodchips], fontsize=8, bbox_to_anchor=(1,1))
 
 # Find good chips
 print("goodchips=", np.where(snr_LPs[3]>20))
