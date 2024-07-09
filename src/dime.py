@@ -23,8 +23,6 @@ import starry
 
 import lsd_utils as lsd
 import ELL_map_class as ELL_map
-import modelfitting as mf
-from config import nobss
 
 class DopplerImaging():
     """A class for Doppler Imaging reconstruction.
