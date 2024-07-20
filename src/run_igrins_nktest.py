@@ -9,7 +9,7 @@ from scipy.signal import savgol_filter
 
 instru = "IGRINS"
 target = "W1049B"
-band = "K"
+band = "H"
 savedir = f"nktest_{instru}_{band}_{target}"
 
 params, goodchips, modelspec = load_config(instru, target, band)
@@ -21,6 +21,7 @@ if not os.path.exists(paths.figures/savedir):
 
 start = 72 if band == "K" else 99 # starting order number
 linemark = 100
+hw = 40
 
 ##############################################################################
 ####################      Run!      ##########################################
@@ -47,7 +48,10 @@ for nk in nks:
     smoothed = savgol_filter(dmap.obskerns_norm, 31, 3)
     resid = dmap.obskerns_norm - smoothed
     err_pix = np.array([np.abs(resid[:,:,pix] - np.median(resid, axis=2)) for pix in range(nk)]) # error of each pixel in LP by MAD
-    err_pix_linecen = err_pix[int(nk/2-30):int(nk/2+30)]
+    if int(nk/2-hw) < 0:
+        err_pix_linecen = err_pix
+    else:
+        err_pix_linecen = err_pix[int(nk/2-hw):int(nk/2+hw)]
     err_LP = 1.4826 * np.median(err_pix_linecen, axis=0) # error of each LP (at each t and chip)
 
     signal = 1 - smoothed.min(axis=2).mean(axis=0) # signal = line depth
