@@ -347,12 +347,12 @@ class DopplerImaging():
                 this_map = ELL_map.Map(nlat=self.nlat, nlon=self.nlon, type='eqarea', inc=self.inc_, deltaphi=-rot)
             else:
                 this_map = ELL_map.Map(nlat=self.nlat, nlon=self.nlon, inc=self.inc_, deltaphi=-rot)
-            this_doppler = 1. + self.vsini*this_map.visible_rvcorners.mean(1)/const.c/np.cos(self.inc_) # mean rv of each cell in m/s
+            this_doppler = self.vsini*this_map.visible_rvcorners.mean(1)/np.cos(self.inc_) # mean rv of each cell in m/s
             good = (this_map.projected_area>0) * np.isfinite(this_doppler)    
             for ii in good.nonzero()[0]:
                 if ii in self.uncovered:       # to collect uncovered cells,
                     self.uncovered.remove(ii)  # remove cells that are visible at this rot
-                speccube[ii,:] = modelfunc(self.dv + (this_doppler[ii]-1)*const.c)
+                speccube[ii,:] = modelfunc(self.dv + this_doppler[ii])
             limbdarkening = (1. - self.lld) + self.lld * this_map.mu
             Rblock = speccube * ((limbdarkening*this_map.projected_area).reshape(this_map.ncell, 1)*np.pi/this_map.projected_area.sum())
             self.Rmatrix[:, self.dv.size*kk:self.dv.size*(kk+1)] = Rblock
