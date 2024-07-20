@@ -352,7 +352,7 @@ class DopplerImaging():
             for ii in good.nonzero()[0]:
                 if ii in self.uncovered:       # to collect uncovered cells,
                     self.uncovered.remove(ii)  # remove cells that are visible at this rot
-                speccube[ii,:] = modelfunc(self.dv + (this_doppler[ii]-1)*const.c/1000.)
+                speccube[ii,:] = modelfunc(self.dv + (this_doppler[ii]-1)*const.c)
             limbdarkening = (1. - self.lld) + self.lld * this_map.mu
             Rblock = speccube * ((limbdarkening*this_map.projected_area).reshape(this_map.ncell, 1)*np.pi/this_map.projected_area.sum())
             self.Rmatrix[:, self.dv.size*kk:self.dv.size*(kk+1)] = Rblock
@@ -391,7 +391,7 @@ class DopplerImaging():
         err_observed_1d = np.tile(err_each_obs[:, np.newaxis], (1,self.nk)).ravel() # look like a step function over different times
 
         # mask out non-surface velocity space with weight=0
-        width = int(self.vsini/1e3/np.abs(np.diff(self.dv).mean())) + 15 # vsini edge plus uncert=3
+        width = int(self.vsini/np.abs(np.diff(self.dv).mean())) + 15 # vsini edge plus uncert=3
         central_indices = np.arange(self.nobs) * self.nk + int(self.nk/2)
         mask = np.zeros_like(self.observed_1d, dtype=bool)
         for central_idx in central_indices:
@@ -667,8 +667,8 @@ class DopplerImaging():
         plt.xticks([-50, -25, 0, 25, 50], fontsize=8)
         plt.ylabel("Elapsed time (h)", fontsize=8)
         plt.yticks(np.unique([int(i) for i in self.timestamps]), fontsize=8)
-        plt.vlines(x=self.vsini/1e3, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
-        plt.vlines(x=-self.vsini/1e3, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
+        plt.vlines(x=self.vsini, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
+        plt.vlines(x=-self.vsini, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
         if colorbar:
             cb = plt.colorbar(fraction=0.06, pad=0.28, aspect=15, orientation="horizontal", label="%")
             cb_ticks = cb.ax.get_xticks()
@@ -705,8 +705,8 @@ class DopplerImaging():
         plt.xticks([-50, -25, 0, 25, 50], fontsize=8)
         plt.ylabel("Elapsed time (h)", fontsize=8)
         plt.yticks(np.unique([int(i) for i in self.timestamps]), fontsize=8)
-        plt.vlines(x=self.vsini/1e3, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
-        plt.vlines(x=-self.vsini/1e3, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
+        plt.vlines(x=self.vsini, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
+        plt.vlines(x=-self.vsini, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
         if colorbar:
             cb = plt.colorbar(fraction=0.06, pad=0.28, aspect=15, orientation="horizontal", label="%")
             cb_ticks = cb.ax.get_xticks()
