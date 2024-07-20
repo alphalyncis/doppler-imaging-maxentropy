@@ -347,7 +347,7 @@ class DopplerImaging():
                 this_map = ELL_map.Map(nlat=self.nlat, nlon=self.nlon, type='eqarea', inc=self.inc_, deltaphi=-rot)
             else:
                 this_map = ELL_map.Map(nlat=self.nlat, nlon=self.nlon, inc=self.inc_, deltaphi=-rot)
-            this_doppler = self.vsini*this_map.visible_rvcorners.mean(1)/np.cos(self.inc_) # mean rv of each cell in m/s
+            this_doppler = self.vsini*this_map.visible_rvcorners.mean(1)/np.cos(self.inc_) # mean rv of each cell in km/s
             good = (this_map.projected_area>0) * np.isfinite(this_doppler)    
             for ii in good.nonzero()[0]:
                 if ii in self.uncovered:       # to collect uncovered cells,

@@ -257,13 +257,12 @@ class Map:
         If mod=='latlon', these inputs specify the number of grid cells
         across map, in latitude and longitude.
   
-      i : scalar
+      inc : scalar
         the inclination, is in units of radians. Zero means we see the
         object equator-on; pi/2 means we see it pole-on.
   
       type : str
-        For now, only valid entry is 'latlon'. Eventually, this could be
-        expanded to allow other types of projection grids. 'eqarea'
+        'latlon' or 'eqarea'.
   
       deltaphi : scalar
         Rotation of map, specified in radians.
