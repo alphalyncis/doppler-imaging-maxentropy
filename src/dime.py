@@ -169,7 +169,6 @@ class DopplerImaging():
         self.lld = params_dict['lld']
 
         ### Spectrum attributes ###
-        #self.wav_nm = np.empty((self.nchip, self.npix), dtype=float)
         self.wav_nm = wavelength
         self.wav_angs = np.array(self.wav_nm) * 10 # from nm to angstroms
         
@@ -177,9 +176,6 @@ class DopplerImaging():
         self.template = np.empty_like(self.observed)
         self.error    = np.empty_like(self.observed)
         
-        #self.observed = observed
-        #self.template = template
-        #self.error = error
         self.timestamps = params_dict['timestamps']
         self.flux_err = np.empty((), dtype=float)
 
@@ -231,6 +227,9 @@ class DopplerImaging():
         self.entropy = None
         self.fitres = None
         self.model_observation = None
+        self.obs_2d = None
+        self.flatmodel_2d = None
+        self.bestmodel_2d = None
 
     def load_data(self, observed, template, error):
         '''Load data from cubes.
@@ -318,7 +317,8 @@ class DopplerImaging():
                 plt.savefig(f'{savedir}/LSD_profiles.png', bbox_inches="tight", dpi=150, transparent=True)
 
         if plot_deviation_map:
-            self.plot_deviation_map(self.obskerns_norm)
+            mean_dev = np.median(np.array([self.obskerns_norm[:,i] - self.timeav_profiles[i] for i in range(self.nchip)]), axis=0)
+            self.plot_deviation_map(mean_dev)
             if savedir is not None:
                 plt.savefig(f'{savedir}/deviation_map.png', bbox_inches="tight", dpi=150, transparent=True)
 
@@ -347,13 +347,13 @@ class DopplerImaging():
                 this_map = ELL_map.Map(nlat=self.nlat, nlon=self.nlon, type='eqarea', inc=self.inc_, deltaphi=-rot)
             else:
                 this_map = ELL_map.Map(nlat=self.nlat, nlon=self.nlon, inc=self.inc_, deltaphi=-rot)
-            this_doppler = self.vsini*this_map.visible_rvcorners.mean(1)/np.cos(self.inc_) # mean rv of each cell in km/s
+            this_doppler = self.vsini*this_map.visible_rvcorners.mean(1)/np.cos(self.inc_) # mean rv of each cell in km/s = vsini * y_cell
             good = (this_map.projected_area>0) * np.isfinite(this_doppler)    
             for ii in good.nonzero()[0]:
                 if ii in self.uncovered:       # to collect uncovered cells,
                     self.uncovered.remove(ii)  # remove cells that are visible at this rot
                 speccube[ii,:] = modelfunc(self.dv + this_doppler[ii])
-            limbdarkening = (1. - self.lld) + self.lld * this_map.mu
+            limbdarkening = 1. - self.lld + self.lld * this_map.mu
             Rblock = speccube * ((limbdarkening*this_map.projected_area).reshape(this_map.ncell, 1)*np.pi/this_map.projected_area.sum())
             self.Rmatrix[:, self.dv.size*kk:self.dv.size*(kk+1)] = Rblock
 
@@ -438,6 +438,10 @@ class DopplerImaging():
         bestparams2d = self.reshape_map_to_grid() # update self.bestparamgrid
         self.bestparamgrid = np.roll(np.flip(bestparams2d, axis=1), 
                                      int(0.5*bestparams2d.shape[1]), axis=1)
+
+        self.obs_2d = np.reshape(self.observed_1d_sc, (self.nobs, self.nk))
+        self.flatmodel_2d = np.reshape(self.flatmodel, (self.nobs, self.nk))
+        self.bestmodel_2d = np.reshape(self.model_observation, (self.nobs, self.nk))
         
 
     def reshape_map_to_grid(self, plot_unstretched_map=False):
@@ -635,8 +639,8 @@ class DopplerImaging():
         if savedir is not None:
             plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
     
-    def plot_deviation_map(self, line_profiles, savedir=None, colorbar=False, 
-                           lim=0.003, figsize=(10,6), aspect=29):
+    def plot_deviation_map(self, dev_profiles, savedir=None, colorbar=False, cmap='YlOrBr',
+                           figsize=(6,4), aspect=30, vmax=0.003, dpi=150, newfig=True):
         '''Plot order-averaged deviation map.
         A darker deviation pattern means a surface feature fainter than the background.
 
@@ -650,23 +654,30 @@ class DopplerImaging():
                 'median_each': take the median LP for each order, then take the deviation from uniform LP
                 'mean': take the mean of the deviation over all orders
         '''
+        plt.rcParams.update({'font.size': 18})
         ratio = 1.3 if self.nobs < 10 else 0.7
 
-        mean_dev = np.median(np.array(
-            [line_profiles[:,i] - self.timeav_profiles[i] for i in range(self.nchip)]
-        ), axis=0) # mean over chips
-        plt.figure(figsize=figsize)
-        plt.imshow(mean_dev, 
-            extent=(self.dv.max(), self.dv.min(), self.timestamps[-1], 0),
-            aspect=int(ratio * aspect),
-            cmap='YlOrBr',
-            vmin=-lim, vmax=lim) # positive diff means dark spot
+        #mean_dev = np.median(np.array([line_profiles[:,i] - self.timeav_profiles[i] for i in range(self.nchip)]), axis=0) # mean over chips
+        mean_dev = dev_profiles
+        if newfig:
+            plt.figure(figsize=figsize)
+        if vmax is not None:
+            plt.imshow(mean_dev, 
+                extent=(self.dv.max(), self.dv.min(), self.timestamps[-1], 0),
+                aspect=int(ratio * aspect),
+                cmap=cmap,
+                vmin=-vmax, vmax=vmax) # positive diff means dark spot
+        else:
+            plt.imshow(mean_dev, 
+                extent=(self.dv.max(), self.dv.min(), self.timestamps[-1], 0),
+                aspect=int(ratio * aspect),
+                cmap=cmap)
         cut = self.nk - 70 if self.nk > 70 else 0
         plt.xlim(self.dv.min() + cut, self.dv.max() - cut),
-        plt.xlabel("velocity (km/s)", fontsize=8)
-        plt.xticks([-50, -25, 0, 25, 50], fontsize=8)
-        plt.ylabel("Elapsed time (h)", fontsize=8)
-        plt.yticks(np.unique([int(i) for i in self.timestamps]), fontsize=8)
+        plt.xlabel("velocity (km/s)")
+        plt.xticks([-50, -25, 0, 25, 50])
+        plt.ylabel("Elapsed time (h)")
+        plt.yticks(np.unique([int(i) for i in self.timestamps]))
         plt.vlines(x=self.vsini, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
         plt.vlines(x=-self.vsini, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
         if colorbar:
@@ -676,45 +687,31 @@ class DopplerImaging():
             cb.ax.tick_params(labelsize=8)
         plt.tight_layout()
         if savedir is not None:
-            plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
+            plt.savefig(savedir, bbox_inches="tight", dpi=dpi, transparent=True)
 
-    def plot_deviation_modelmap(self, savedir=None, colorbar=False, 
+        return plt.gca()
+
+    def plot_deviation_map_residual(self, savedir=None, colorbar=False, 
                            lim=0.003, figsize=(10,6), aspect=29):
-        '''Plot order-averaged deviation map of the best-fit model map.
-        A darker deviation pattern means a surface feature fainter than the background.
-
+        '''Plot order-averaged deviation map of the observed, modelled and residual map.
+        
         Parameters
         ----------
             savedir: str
                 Full path (include filename) to save the figure.
         '''
-        ratio = 1.3 if self.nobs < 10 else 0.7
-
-        mean_dev = np.median(np.array(
-            [self.obskerns_norm[:,i] - self.timeav_profiles[i] for i in range(self.nchip)]
-        ), axis=0) # mean over chips
-        plt.figure(figsize=figsize)
-        plt.imshow(mean_dev, 
-            extent=(self.dv.max(), self.dv.min(), self.timestamps[-1], 0),
-            aspect=int(ratio * aspect),
-            cmap='YlOrBr',
-            vmin=-lim, vmax=lim) # positive diff means dark spot
-        cut = self.nk - 70 if self.nk > 70 else 0
-        plt.xlim(self.dv.min() + cut, self.dv.max() - cut),
-        plt.xlabel("velocity (km/s)", fontsize=8)
-        plt.xticks([-50, -25, 0, 25, 50], fontsize=8)
-        plt.ylabel("Elapsed time (h)", fontsize=8)
-        plt.yticks(np.unique([int(i) for i in self.timestamps]), fontsize=8)
-        plt.vlines(x=self.vsini, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
-        plt.vlines(x=-self.vsini, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
-        if colorbar:
-            cb = plt.colorbar(fraction=0.06, pad=0.28, aspect=15, orientation="horizontal", label="%")
-            cb_ticks = cb.ax.get_xticks()
-            cb.ax.set_xticklabels([f"{t*100:.1f}" for t in cb_ticks])
-            cb.ax.tick_params(labelsize=8)
-        plt.tight_layout()
-        if savedir is not None:
-            plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
+        plt.figure(figsize=(18,4.5))
+        cmap='YlOrBr'
+        sz=18
+        plt.subplot(131)
+        self.plot_deviation_map(self.obs_2d - self.flatmodel_2d, cmap=cmap)
+        plt.title("Observed", fontsize=sz)
+        plt.subplot(132)
+        self.plot_deviation_map(self, self.bestmodel_2d - self.flatmodel_2d, cmap=cmap)
+        plt.title("Modelled", fontsize=sz)
+        plt.subplot(133)
+        self.plot_deviation_map(self, self.obs_2d - self.bestmodel_2d, cmap=cmap)
+        plt.title("Residual", fontsize=sz)
 
 
     def plot_mollweide_map(self, clevel=5, sigma=1, colorbar=False, vmax=None, vmin=None, 
@@ -826,6 +823,31 @@ class DopplerImaging():
         if savedir is not None:
             plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
 
+    def plot_fit_results_1d(self, savedir=None, figsize=(18,3), gap=0.02, lw=2):
+        '''Plot the observed and best-fit LP series.
+
+        Parameters
+        ----------
+            savedir: str
+                Full path (include filename) to save the figure.
+        '''
+        plt.figure(figsize=figsize)
+        plt.plot(self.observed_1d_sc, '.', color='k', linewidth=lw, label="Observed")
+        plt.plot(self.model_observation, color='orangered', linewidth=lw, label="Modelled", alpha=0.6)
+        plt.yticks(np.arange(0.95, 1.0, 0.01))
+        plt.xticks([self.nk/2 + self.nk*i for i in range(self.nobs)], [f"{i+1}" for i in range(self.nobs)])
+        plt.xlabel("$\it{nobs}$")
+        plt.xlim(-10, self.nk*self.nobs+10)
+        #plt.ylim(0.93, 1.01)
+        plt.text(1.01, 0.5,
+                f"Q  = {self.metric:.2f} \n$\chi ^2$ = {self.chisq:.2f} \nS  = {self.entropy:.2f}",
+                verticalalignment='top', linespacing=1.2, transform=plt.gca().transAxes)
+        plt.legend(loc=2, bbox_to_anchor=(1., 1.))
+
+        if savedir is not None:
+            plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
+
+        return plt.gca()
 
 class MaxEntropy():
     """A class for Maximum Entropy computations for Doppler imaging."""
