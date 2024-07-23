@@ -20,7 +20,7 @@ goodchipslist = {
             "H": [0, 1, 2, 3, 4, 5, 16, 17, 18, 19]
         },
         "W1049B_0209":{
-            "K": [2, 3, 4, 5, 16, 17, 18, 19], # snr 20-30: 6, 7, 8, 13, 14, 15, 19
+            "K": [2, 3, 4, 5, 15, 16, 17, 18], # snr 20-30: 6, 7, 8, 13, 14, 15, 19
             "H": [0, 1, 2, 3, 4, 5, 16, 17, 18, 19] 
         },
         "W1049A_0209":{
@@ -138,6 +138,8 @@ def load_config(instru, target, band, sim=False):
 
     # set model files to use
     rv = rvs[target]
+    if instru == "CRIRES":
+        rv = 9e-5
 
     # set solver parameters
     period = periods[target]
@@ -154,7 +156,7 @@ def load_config(instru, target, band, sim=False):
         ydeg=ydeg_sim,
         udeg=udeg,
         nc=nc,
-        veq=veq,
+        veq=veq*1e3,
         inc=inc,
         nt=nobs,
         vsini_max=vsini_max,

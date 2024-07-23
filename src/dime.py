@@ -246,7 +246,7 @@ class DopplerImaging():
         self.flux_err = eval(f'{np.median(self.error):.3f}') if self.instru == "IGRINS" else 0.02
 
     def make_lsd_profile(self, modname='t1500g1000f8', savedir=None, shiftmods=False, shiftkerns=False,
-                         plot_deltaspec=False, plot_lsd_profiles=True, plot_deviation_map=True):
+                         plot_deltaspec=False, plot_lsd_profiles=True, plot_deviation_map=True, colorbar=False):
         '''Calculate the LSD profile for a given spectrum.
 
         Parameters
@@ -318,7 +318,7 @@ class DopplerImaging():
 
         if plot_deviation_map:
             mean_dev = np.median(np.array([self.obskerns_norm[:,i] - self.timeav_profiles[i] for i in range(self.nchip)]), axis=0)
-            self.plot_deviation_map(mean_dev)
+            self.plot_deviation_map(mean_dev, colorbar=colorbar)
             if savedir is not None:
                 plt.savefig(f'{savedir}/deviation_map.png', bbox_inches="tight", dpi=150, transparent=True)
 
@@ -584,10 +584,13 @@ class DopplerImaging():
             gap: float
                 Gap between each line profile.
         '''
+        plt.rcParams.update({'font.size': 19})
         line_profiles = self.obskerns_norm
         colors = [plt.cm.gnuplot_r(x) for x in np.linspace(0, 1, self.nobs+4)]
         fig, ax = plt.subplots(figsize=(4, 5))
-        cut = int((self.nk - 70) / 2 + 1.)
+        cut = int((self.nk - 65) / 2 + 1.)
+        if self.nchip == 4: # if crires
+            cut = int(cut*0.9)
         for t in range(self.nobs):
             ax.plot(self.dv[cut:-cut], line_profiles.mean(axis=0).mean(axis=0)[cut:-cut] - gap*t, "--", color="gray", alpha=0.5)
             ax.plot(self.dv[cut:-cut], line_profiles[t].mean(axis=0)[cut:-cut] - gap*t, color=colors[t+1])
@@ -596,7 +599,7 @@ class DopplerImaging():
         ax.set_ylabel("Line intensity")
         ax2 = ax.twinx()
         ax2.set_ylim(ax.get_ybound())
-        ax2.set_yticks([1 - gap*t for t in range(self.nobs)], labels=[f"{t:.1f}h" for t in self.timestamps], fontsize=9)
+        ax2.set_yticks([1 - gap*t for t in range(self.nobs)][1:][::2], labels=[f"{t:.1f}h" for t in self.timestamps][1:][::2])
         #plt.axvline(x=vsini/1e3, color="k", linestyle="dashed", linewidth=1)
         #plt.axvline(x=-vsini/1e3, color="k", linestyle="dashed", linewidth=1)
         #plt.legend(loc=4, bbox_to_anchor=(1,1))
@@ -655,7 +658,13 @@ class DopplerImaging():
                 'mean': take the mean of the deviation over all orders
         '''
         plt.rcParams.update({'font.size': 18})
+        if colorbar:
+            plt.rcParams.update({'font.size': 18})
+            figsize = (figsize[0]*1.3, figsize[1]*1.3)
         ratio = 1.3 if self.nobs < 10 else 0.7
+        cut = self.nk - 70 if self.nk > 70 else 0
+        if self.nchip == 4: # if crires
+            cut = cut + 78/np.diff(self.dv).mean()
 
         #mean_dev = np.median(np.array([line_profiles[:,i] - self.timeav_profiles[i] for i in range(self.nchip)]), axis=0) # mean over chips
         mean_dev = dev_profiles
@@ -672,7 +681,6 @@ class DopplerImaging():
                 extent=(self.dv.max(), self.dv.min(), self.timestamps[-1], 0),
                 aspect=int(ratio * aspect),
                 cmap=cmap)
-        cut = self.nk - 70 if self.nk > 70 else 0
         plt.xlim(self.dv.min() + cut, self.dv.max() - cut),
         plt.xlabel("velocity (km/s)")
         plt.xticks([-50, -25, 0, 25, 50])
@@ -681,10 +689,11 @@ class DopplerImaging():
         plt.vlines(x=self.vsini, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
         plt.vlines(x=-self.vsini, ymin=0, ymax=self.timestamps[-1], colors="k", linestyles="dashed", linewidth=1)
         if colorbar:
-            cb = plt.colorbar(fraction=0.06, pad=0.28, aspect=15, orientation="horizontal", label="%")
+            cb = plt.colorbar(fraction=0.06, pad=0.25, aspect=15, orientation="horizontal", label="%")
+            cb.set_ticks(np.arange(-vmax, vmax+0.001, 0.001))
             cb_ticks = cb.ax.get_xticks()
             cb.ax.set_xticklabels([f"{t*100:.1f}" for t in cb_ticks])
-            cb.ax.tick_params(labelsize=8)
+            cb.ax.tick_params(labelsize=20)
         plt.tight_layout()
         if savedir is not None:
             plt.savefig(savedir, bbox_inches="tight", dpi=dpi, transparent=True)
@@ -739,6 +748,7 @@ class DopplerImaging():
             annotate: bool
                 Whether to annotate the plot.
         '''
+        plt.rcParams.update({'font.size': 12})
         cmap = colormap.copy()
         cmap.set_bad('gray', 1)
         fig = plt.figure(figsize=(5,3))
@@ -756,8 +766,8 @@ class DopplerImaging():
             fig.colorbar(im, fraction=0.065, pad=0.2, orientation="horizontal", label="%")
         yticks = np.linspace(-np.pi/2, np.pi/2, 7)[1:-1]
         xticks = np.linspace(-np.pi, np.pi, 13)[1:-1]
-        ax.set_yticks(yticks, labels=[f'{deg:.0f}˚' for deg in yticks*180/np.pi], fontsize=7, alpha=0.5)
-        ax.set_xticks(xticks, labels=[f'{deg:.0f}˚' for deg in xticks*180/np.pi], fontsize=7, alpha=0.5)
+        ax.set_yticks(yticks, labels=[f'{deg:.0f}˚' for deg in yticks*180/np.pi], fontsize=10, alpha=0.5)
+        ax.set_xticks(xticks, labels=[f'{deg:.0f}˚' for deg in xticks*180/np.pi], fontsize=9, alpha=0.5)
         ax.grid('major', color='k', linewidth=0.25)
         for item in ax.spines.values():
             item.set_linewidth(1.2)
@@ -1037,7 +1047,7 @@ def make_toy_spectrum(wavmin, wavmax, npix,
     return wav, spec, err
 
 def make_fakemap(maptype, contrast,
-                r_deg=33, lat_deg=30, lon_deg=0, 
+                r_deg=30, lat_deg=30, lon_deg=0, 
                 r1_deg=20, lat1_deg=45, lon1_deg=0):
     '''Generate a fake map for simulating Doppler imaging data.
     In a mollweide projection,
@@ -1128,7 +1138,7 @@ def make_fakemap(maptype, contrast,
         diff = 1. - img
         diffnew = diff * amp / diff.max()
         fakemap = 1. - diffnew
-        fakemap = np.roll(fakemap, shift=int(lon_deg), axis=1)
+        fakemap = np.roll(fakemap[::-1], shift=int(lon_deg), axis=1)
         print(f"Created GCM map, original spot contrast = {(1-diff.max())*100:.0f}%.")
         print(f"Flux scaled to requested contrast = {contrast*100:.0f}%.")
         print(f"Spot aligned at lon={lon_deg}.")
