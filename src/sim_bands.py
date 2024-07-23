@@ -38,7 +38,6 @@ for maptype in ["1band"]:
 
     map_sim = DopplerImaging(wav_nm, goodchips, params_run)
     map_sim.load_data(observed, template, error)
-    map_sim.make_lsd_profile(modelspec, plot_lsd_profiles=False, plot_deviation_map=False)
+    map_sim.make_lsd_profile(modelspec, plot_lsd_profiles=False, plot_deviation_map=True, savedir=paths.figures/f"{savedir}/")
     map_sim.solve(create_obs_from_diff=True, solver='scipy')
     map_sim.plot_mollweide_map(vmin=85, vmax=110, savedir=paths.figures/f"{savedir}/solver1.png")
-    map_sim.plot_fit_results_2d(dev_only=True, gap=0.01)

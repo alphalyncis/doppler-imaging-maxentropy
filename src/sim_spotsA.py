@@ -6,15 +6,15 @@ from dime import DopplerImaging, load_data_from_pickle, make_fakemap, simulate_d
 from config import load_config
 
 instru = "IGRINS"
-target = "W1049B"
+target = "W1049A"
 band = "K"
 params_starry, params_run, goodchips, modelspec = load_config(instru, target, band, sim=True)
 model_datafile = paths.data / f"fitted/{instru}_{target}_{band}_{modelspec}.pickle"
 contrast = 0.8
-goodchips = [1,2,3,4]
+#goodchips = [1,2,3,4]
 
 for maptype in ["1spot", "2spot"]:
-    savedir = f"sim_{maptype}"
+    savedir = f"sim_A_{maptype}"
 
     if not os.path.exists(paths.figures / savedir):
         os.makedirs(paths.figures / savedir)
@@ -28,9 +28,14 @@ for maptype in ["1spot", "2spot"]:
     flux_err = eval(f'{np.median(error):.3f}')
 
     # Make mock observed spectra
-    fakemap = make_fakemap(maptype, contrast, 
-        r_deg=33, lat_deg=0, lon_deg=90, 
-        r1_deg=25, lat1_deg=45, lon1_deg=-60)
+    if maptype == "1spot":
+        fakemap = make_fakemap(maptype, contrast, 
+            r_deg=30, lat_deg=60, lon_deg=-75)
+        
+    elif maptype == "2spot":
+        fakemap = make_fakemap(maptype, contrast, 
+            r_deg=30, lat_deg=60, lon_deg=140, 
+            r1_deg=30, lat1_deg=60, lon1_deg=0)    
 
     mean_spectrum = np.median(template, axis=0)
     observed = simulate_data(fakemap, mean_spectrum, wav_nm, flux_err, params_starry, 
@@ -39,7 +44,6 @@ for maptype in ["1spot", "2spot"]:
 
     map_sim = DopplerImaging(wav_nm, goodchips, params_run)
     map_sim.load_data(observed, template, error)
-    map_sim.make_lsd_profile(modelspec, plot_lsd_profiles=False, plot_deviation_map=False)
+    map_sim.make_lsd_profile(modelspec, plot_lsd_profiles=False, plot_deviation_map=True, savedir=paths.figures/f"{savedir}/")
     map_sim.solve(create_obs_from_diff=True, solver='scipy')
     map_sim.plot_mollweide_map(vmin=85, vmax=110, savedir=paths.figures/f"{savedir}/solver1.png")
-    map_sim.plot_fit_results_2d(dev_only=True, gap=0.01)
