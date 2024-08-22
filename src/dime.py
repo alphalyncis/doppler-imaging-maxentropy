@@ -443,7 +443,6 @@ class DopplerImaging():
         self.flatmodel_2d = np.reshape(self.flatmodel, (self.nobs, self.nk))
         self.bestmodel_2d = np.reshape(self.model_observation, (self.nobs, self.nk))
         
-
     def reshape_map_to_grid(self, plot_unstretched_map=False):
         '''Reshape a 1D map vector to a 2D grid.
         Requires bestparams attribute, to be called after solve().
@@ -783,6 +782,29 @@ class DopplerImaging():
         
         if savedir is not None:
             plt.savefig(savedir, bbox_inches="tight", dpi=150, transparent=True)
+            fits.writeto(savedir, self.bestparamgrid, overwrite=True)
+
+
+    def plot_mecator_map(self, clevel=5, sigma=1, colormap=plt.cm.gist_heat, vmax=None, vmin=None, savedir=None):
+        fig, ax = plt.subplots(figsize=(8,4))
+        plotmap = np.nan_to_num(self.bestparamgrid, nan=100.0)
+        if vmax is None:
+            ax.imshow(plotmap, origin='lower', extent=(-180, 180, -90, 90), cmap=colormap, interpolation='bicubic')
+        else:
+            ax.imshow(plotmap, origin='lower', extent=(-180, 180, -90, 90), cmap=colormap, interpolation='bicubic', vmin=vmin, vmax=vmax)
+        ax.set_yticks([])
+        ax.set_xticks([])
+        ax.grid("off")
+        plt.axis('off')
+        for item in ax.spines.values():
+            item.set_linewidth(1.2)
+        plt.tight_layout()
+
+        if savedir is not None:
+            plt.savefig(savedir,bbox_inches='tight', pad_inches=0)
+            fits.writeto(str(savedir)[:-4]+".fits", self.bestparamgrid, overwrite=True)
+
+
 
     def plot_starry_map(self, ydeg=7, colorbar=False, savedir=None):
         '''Plot the best-fit map using starry.
