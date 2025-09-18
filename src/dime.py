@@ -1005,6 +1005,13 @@ def load_data_from_pickle(model_datafile, goodchips, instru='IGRINS', pad=100):
                     data["chipmodnobroad"][k][jj] / data["chipcors"][k][jj],
                 )
 
+    elif instru == "ELT":
+        for k in range(nobs):
+            for i, jj in enumerate(goodchips):
+                observed[k, i] = data["observed"][k][jj]
+                template[k, i] = data["chipmodnobroad"][k][jj]
+                error[k, i] = data["error"][k][jj]
+
     wav_nm = lams[goodchips] * 1000 # um to nm
 
     # trim the edges of the spectrum

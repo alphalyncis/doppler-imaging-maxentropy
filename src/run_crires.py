@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 instru = "CRIRES"
 target = "W1049B"
 band = "K"
-savedir = f"{instru}_{band}_{target}"
+savedir = f"{instru}_{band}_{target}_test"
 
 params, goodchips, modelspec = load_config(instru, target, band)
 model_datafile = paths.data/f'fitted/{instru}_{target}_{band}_{modelspec}.pickle'
