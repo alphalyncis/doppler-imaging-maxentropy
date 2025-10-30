@@ -800,6 +800,9 @@ def modelspec_template(params, lam_template, template, wcoef, NPC, npix, retlam=
     # Shift template to specified RV & interpolate to wavelength grid
     lam = np.polyval(wcoef, pix)
     output = np.interp(lam, lam_template*(1.+rv), new_template, left=0., right=0.)
+    
+    #print("---lam---", lam)
+    #print("---lam_temp---", lam_template*(1.+rv))
 
     # Multiply by appropriate normalization polynomial
     output *= np.polyval(continuum_coefs, pix)

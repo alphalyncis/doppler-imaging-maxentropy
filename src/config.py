@@ -6,8 +6,8 @@ import paths
 ##############################################################################
 
 
-npixs = {"IGRINS": 1848, "CRIRES": 1024, "ELT": 1550}
-nks = {"IGRINS": 125, "CRIRES": 203, "ELT": 150}
+npixs = {"IGRINS": 1848, "CRIRES": 1024, "METIS": 2000}
+nks = {"IGRINS": 125, "CRIRES": 203, "METIS": 150}
 
 goodchipslist = {
     "IGRINS": {
@@ -44,16 +44,20 @@ goodchipslist = {
             "K": [0, 1, 2, 3]
         }
     },
-    "ELT": {
+    "METIS": {
         "W1049B":{
-            "K": [0, 1, 2, 3]
+            "K": [0, 1, 2, 3],
+            "L": [0, 1, 2, 3],
+            "M": [0, 1, 2, 3, 4, 5]
         }
     }
 }
 
 bestmodels = {
     "W1049B": {"K":"t1500g1000f8",
-               "H":"t1400g1000f8"},
+               "H":"t1400g1000f8",
+               "L":"t1400g1000f2",
+               "M":"t1400g1000f8"},
     "W1049A": {"K":"t1500g1000f8",
                "H":"t1500g1000f8"},
     "W1049B_0209": {"K":"t1500g1000f8",
@@ -66,11 +70,11 @@ bestmodels = {
                     "H":"t1500g1000f8"}
 }
 
-nobss =   {"W1049B": 14,     "W1049A": 14,     "W1049B_0209": 14,     "W1049A_0209": 14,     "2M0036_1103": 7   ,  "2M0036_1105": 8}
+#nobss =   {"W1049B": 14,     "W1049A": 14,     "W1049B_0209": 14,     "W1049A_0209": 14,     "2M0036_1103": 7   ,  "2M0036_1105": 8}
 periods = {"W1049B": 5,      "W1049A": 7,      "W1049B_0209": 5,      "W1049A_0209": 7,      "2M0036_1103": 2.7 ,  "2M0036_1105": 2.7}
 incs =    {"W1049B": 80,     "W1049A": 70,     "W1049B_0209": 80,     "W1049A_0209": 70,     "2M0036_1103": 51  ,  "2M0036_1105": 51}
 vsinis =  {"W1049B": 29,     "W1049A": 21,     "W1049B_0209": 29,     "W1049A_0209": 21,     "2M0036_1103": 33,    "2M0036_1105": 33} # km/s
-rvs =     {"W1049B": 0,"W1049A": 5.4e-5, "W1049B_0209": 7.05e-5,"W1049A_0209": 5.4e-5, "2M0036_1103": 6.5e-5,"2M0036_1105": 6.5e-5} # rv in km/s / c in km/s
+rvs =     {"W1049B": 10e-5,"W1049A": 5.4e-5, "W1049B_0209": 7.05e-5,"W1049A_0209": 5.4e-5, "2M0036_1103": 6.5e-5,"2M0036_1105": 6.5e-5} # rv in km/s / c in km/s
                 #9e-5 9.3e-5if CRIRES 7.4e-5 5.4e-5 if IGRINS 0 if ELT
 
 timestamps = { # obs times in hour, computed from obs headers (JD-DATE)
@@ -134,7 +138,7 @@ niter = 5000
 def load_config(instru, target, band, sim=False):
     # Auto consistent options
 
-    nobs = nobss[target]
+    #nobs = nobss[target]
     nk = nks[instru]
 
     # set chips to include
@@ -156,7 +160,8 @@ def load_config(instru, target, band, sim=False):
     timestamp = timestamps[target]
     phases = timestamp * 2 * np.pi / period # 0 ~ 2*pi in rad
     theta = 360.0 * timestamp / period      # 0 ~ 360 in degree
-
+    
+    nobs = len(timestamp)
     params_starry = dict(
         ydeg=ydeg_sim,
         udeg=udeg,
@@ -170,6 +175,7 @@ def load_config(instru, target, band, sim=False):
 
     params_run = dict(
         nk=nk,
+        nobs=nobs,
         phases=phases,
         timestamps=timestamp,
         inc=inc, 

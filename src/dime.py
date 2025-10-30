@@ -156,7 +156,7 @@ class DopplerImaging():
 
         ### General attributes ###
         self.instru = instru
-        self.nobs = params_dict['phases'].shape[0]
+        self.nobs = params_dict['nobs']
         self.npix = wavelength.shape[-1]
         self.goodchips = goodchips
         self.nchip = len(goodchips)
@@ -231,6 +231,14 @@ class DopplerImaging():
         self.flatmodel_2d = None
         self.bestmodel_2d = None
 
+    def __str__(self) -> str:
+        return f"DopplerImaging Class with\n \
+            instru={self.instru}\n \
+            nobs={self.nobs}\n \
+            chip={self.nchip}\n \
+            npix={self.npix}\n \
+            nk={self.nk}"
+
     def load_data(self, observed, template, error):
         '''Load data from cubes.
         Required: 
@@ -242,6 +250,7 @@ class DopplerImaging():
         self.observed = observed
         self.template = template
         self.error = error
+        #self.nobs = observed.shape[0]
         #self.timestamps = timestamps #TODO: add timesteps to the data
         self.flux_err = eval(f'{np.median(self.error):.3f}') if self.instru == "IGRINS" else 0.02
 
@@ -281,7 +290,12 @@ class DopplerImaging():
         pspec_cont = fits.getdata(cont_file)
         hdr_pspec_cont = fits.getheader(cont_file)
         wspec = hdr_pspec_cont['crval1'] + np.arange(pspec_cont.size)*hdr_pspec_cont['cdelt1']
-        factor = 1e11 if "t1" in modname else 1e5 # don't know why different model needs scaling with a factor
+
+        # don't know why different model needs scaling with a factor
+        if True:
+            factor = 1e11
+        else:
+            factor = 1e5
         pspec_cont = pspec_cont/factor
         spline = interpolate.UnivariateSpline(wspec, pspec_cont, s=0.0, k=1.0) #interpolate over the continuum measurement
         
@@ -1005,7 +1019,7 @@ def load_data_from_pickle(model_datafile, goodchips, instru='IGRINS', pad=100):
                     data["chipmodnobroad"][k][jj] / data["chipcors"][k][jj],
                 )
 
-    elif instru == "ELT":
+    elif instru == "METIS":
         for k in range(nobs):
             for i, jj in enumerate(goodchips):
                 observed[k, i] = data["observed"][k][jj]
