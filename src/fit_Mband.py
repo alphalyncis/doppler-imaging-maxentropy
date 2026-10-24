@@ -1,6 +1,7 @@
 import numpy as np
 from astropy.table import Table
 import modelfitting as mf
+import paths
 import sys
 from scipy import signal
 import pickle
@@ -21,12 +22,21 @@ def fit_nonstack(target, modelpath, band):
     #  Open IGRINS data
     ###################################
     if target == "W1049B":
-        with open(f'../data/fitted/METIS_{target}_{band}_gcm.pickle', 'rb') as f:
+        datafile = paths.data / "fitted" / f"METIS_{target}_{band}_gcm.pickle"
+        with open(datafile, 'rb') as f:
             data = pickle.load(f)
             lams = data['chiplams']
             observed = data['observed']
             error = data['error']
 
+    if target == "case1":
+        datafile = paths.data / "fitted" / f"METIS_{target}_{band}_gcm.pickle"
+        print(f"Opening data file {datafile}")
+        with open(datafile, 'rb') as f:
+            data = pickle.load(f)
+            lams = data['chiplams']
+            observed = data['observed']
+            error = data['error']
 
     ##########################
     # Open model
@@ -90,11 +100,11 @@ def fit_nonstack(target, modelpath, band):
             ind90 = np.sort(observed[t, c])[int(0.9*npix)]  
             ccoef = np.polyfit(x[observed[t,c]>ind90], observed[t,c][observed[t,c]>ind90], NPC-1)
 
-            guess = np.concatenate(([21, 0.3, 9e-5], ccoef))
+            guess = np.concatenate(([24, 0.3, 0], ccoef))
             #print("---Intial input---\n", guess, lam_template[-1], template[-1], wcoef, NPC, npix)
             #print("---Intial eval---\n", mf.modelspec_template(guess, lam_template, template, wcoef, NPC, npix))
             bounds = [
-                [0, 50],   # vsini
+                [0, 30],   # vsini
                 [0, 0.5],     # lld
                 [0, 100/c_km_s], # rv
                 [-10, 10], 
@@ -160,9 +170,10 @@ def fit_nonstack(target, modelpath, band):
     return fit[0], lam_template, template, wcoef, NPC, npix
 
 if __name__ == "__main__":
-    target = "W1049B"
+    #target = "W1049B"
+    target = "case1"
     band = "M"
-    modellist = sorted(glob.glob(f"{homedir}/uoedrive/data/diamondback/spectra/t1*g1000*_m0.0_co1.0.spec"))
+    modellist = sorted(glob.glob(f"{homedir}/uoedrive/data/diamondback_test/t1*g1000*_m0.0_co1.0.spec"))
 
     for model in modellist:
         print(f"***Running fit to model {model}***")

@@ -1,6 +1,7 @@
 import numpy as np
 from astropy.table import Table
 import modelfitting as mf
+import paths
 import sys
 from scipy import signal
 import pickle
@@ -10,7 +11,7 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import os
 homedir = os.path.expanduser('~')
-c_km_s = 299792.458  # speed of light, km/s
+c_light = 299792.458  # speed of light, m/s
 
 
 def fit_nonstack(target, modelpath, band):
@@ -21,14 +22,22 @@ def fit_nonstack(target, modelpath, band):
     #  Open IGRINS data
     ###################################
     if target == "W1049B":
-        datafile = f'../data/fitted/METIS_{target}_{band}_gcm.pickle'
-        print(f"Fitting observed data {datafile}")
+        datafile = paths.data / "fitted" / f"METIS_{target}_{band}_gcm.pickle"
+        print(f"Opening data file {datafile}")
         with open(datafile, 'rb') as f:
             data = pickle.load(f)
             lams = data['chiplams']
             observed = data['observed']
             error = data['error']
 
+    if target == "case1":
+        datafile = paths.data / "fitted" / f"METIS_{target}_{band}_gcm.pickle"
+        print(f"Opening data file {datafile}")
+        with open(datafile, 'rb') as f:
+            data = pickle.load(f)
+            lams = data['chiplams']
+            observed = data['observed']
+            error = data['error']
 
     ##########################
     # Open model
@@ -92,13 +101,13 @@ def fit_nonstack(target, modelpath, band):
             ind90 = np.sort(observed[t, c])[int(0.9*npix)]  
             ccoef = np.polyfit(x[observed[t,c]>ind90], observed[t,c][observed[t,c]>ind90], NPC-1)
 
-            guess = np.concatenate(([21, 0.3, 9e-5], ccoef))
-            #print("---Intial input---\n", guess, lam_template[-1], template[-1], wcoef, NPC, npix)
-            #print("---Intial eval---\n", mf.modelspec_template(guess, lam_template, template, wcoef, NPC, npix))
+            guess = np.concatenate(([24, 0.3, 0], ccoef))
+            print("---Intial input---\n", guess, lam_template[-1], template[-1], wcoef, NPC, npix)
+            print("---Intial eval---\n", mf.modelspec_template(guess, lam_template, template, wcoef, NPC, npix))
             bounds = [
-                [0, 50],   # vsini
+                [0, 30],   # vsini
                 [0, 0.5],     # lld
-                [0, 100/c_km_s], # rv
+                [0, 100/c_light], # rv
                 [-10, 10], 
                 [-10, 10]]
             fitargs = (mf.modelspec_template, lam_template, template, wcoef, NPC, npix, observed[t,c], error[t,c], dict(uniformprior=bounds))
@@ -162,12 +171,12 @@ def fit_nonstack(target, modelpath, band):
     return fit[0], lam_template, template, wcoef, NPC, npix
 
 if __name__ == "__main__":
-    target = "W1049B"
-    band = "K"
-    modellist = sorted(glob.glob(f"{homedir}/uoedrive/data/diamondback/spectra/t1*g1000*_m0.0_co1.0.spec"))
-
+    #target = "W1049B"
+    target = "case1"
+    band = "L1"
+    #modellist = sorted(glob.glob(f"{homedir}/uoedrive/data/diamondback/spectra/t1*g1000*_m0.0_co1.0.spec"))
+    modellist = sorted(glob.glob(f"{homedir}/uoedrive/data/diamondback_test/t1*g1000*_m0.0_co1.0.spec"))
+    
     for model in modellist:
         print(f"***Running fit to model {model}***")
         fitres, lam_template, template, wcoef, NPC, npix = fit_nonstack(target=target, modelpath=model, band=band)
-
-    print(f"Fitting done for {target} {band}")

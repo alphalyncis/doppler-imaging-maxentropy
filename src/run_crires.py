@@ -24,7 +24,7 @@ if not os.path.exists(paths.figures/savedir):
 # Load data from pickle fit
 wav_nm, template, observed, error = load_data_from_pickle(model_datafile, goodchips, instru=instru)
 
-dmap_cr = DopplerImaging(wav_nm, goodchips, params_dict=params)
+dmap_cr = DopplerImaging(wav_nm, goodchips, params_dict=params, instru="CRIRES")
 dmap_cr.load_data(observed, template, error)
 dmap_cr.make_lsd_profile(modelspec, plot_lsd_profiles=True, plot_deviation_map=True, colorbar=True, savedir=paths.figures/f"{savedir}/")
 dmap_cr.solve(create_obs_from_diff=True, solver='scipy')

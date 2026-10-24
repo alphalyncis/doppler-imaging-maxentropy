@@ -1061,7 +1061,7 @@ def gaussian(p, x):
     if not isinstance(x, np.ndarray):
         x = array(x, dtype=float, copy=False)
 
-    y = p[0]/(p[1]*sqrt(2*np.pi)) * exp(-0.5 * ((x-p[2])/p[1])**2)
+    y = p[0]/(p[1]*np.sqrt(2*np.pi)) * np.exp(-0.5 * ((x-p[2])/p[1])**2)
 
     if len(p)>3:
         y += p[3]

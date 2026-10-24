@@ -37,7 +37,7 @@ for nk in nks:
     #cut = nk - 50
     params['nk'] = nk
 
-    dmap = DopplerImaging(wav_nm, goodchips, params_dict=params)
+    dmap = DopplerImaging(wav_nm, goodchips, params_dict=params, instru="CRIRES")
     dmap.load_data(observed, template, error)
     dmap.make_lsd_profile(modelspec, plot_lsd_profiles=False, plot_deviation_map=True)
     dmap.solve(create_obs_from_diff=True, solver='scipy')
