@@ -6,6 +6,9 @@ import pandas as pd
 from scipy import signal
 import scipy.constants as const
 import matplotlib.pyplot as plt
+from pathlib import Path
+
+telluricdir = Path(__file__).resolve().parents[1] / 'data' / 'telluric'
 
 def gaussian(p, x):
     """ Compute a gaussian distribution at the points x.
@@ -678,8 +681,8 @@ fs = 16
 plotalot = True
 
 homedir = os.path.expanduser('~')
-telfn    = 'transdata_0,5-5_mic.fits'
-telradfn = 'mauna_kea_emission_h2o=16_airmass=1,5_photon-sec-arcsec2-nm-m2.fits'
+telfn    = telluricdir / 'transdata_0,5-5_mic.fits'
+telradfn = telluricdir / 'mauna_kea_emission_h2o=16_airmass=1,5_photon-sec-arcsec2-nm-m2.fits'
 
 atm0    = fits.getdata(telfn).T
 radatm0 = fits.getdata(telradfn)

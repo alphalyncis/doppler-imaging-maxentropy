@@ -7,12 +7,13 @@ import scipy.constants as const
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import pandas as pd
+import paths
 
 # 20260608 - fixed eso sky units, fixed slit width and nrows, update itime, LLD, resolution
 
 homedir = os.path.expanduser('~')
-teldir = f'{homedir}/uoedrive/data/telluric'
-outdir = 'metric_output'
+outdir = paths.output / 'metric_output'
+outdir.mkdir(parents=True, exist_ok=True)
 
 ### Physical constants
 rjup = 7.1492e7       # Jupiter equatorial radius, m
@@ -619,7 +620,7 @@ def compute_synthetic_mags(model_lam_um, model_flam_cgs, distance, phot_bands):
 
 
 ### Band definitions for metric integration
-band_inds  = [0.95, 1.8], [1.8, 2.4], [3.3, 3.6], [4.6, 4.95]
+band_inds  = [0.95, 1.78], [1.81, 2.4], [3.3, 3.6], [4.6, 4.95]
 band_names = ['ANDES YJH', 'ANDES K', 'METIS L',  'METIS M']
 
 ### CSV columns supplying the peak-to-peak variability amplitude (%) for each band.
@@ -666,11 +667,11 @@ ndit = 3             # number of exposures (for read noise calculation)
 vartablefn = 'variablesheet_full_short.csv'
 df = pd.read_csv(vartablefn)
 
-telfn    = f'{teldir}/transdata_0,5-5_mic.fits'
+telfn    = paths.data / 'telluric/transdata_0,5-5_mic.fits'
 atm0    = fits.getdata(telfn).T
-#telradfn = 'mauna_kea_emission_h2o=16_airmass=1,5_photon-sec-arcsec2-nm-m2.fits'
+#telradfn = paths.data / 'telluric/mauna_kea_emission_h2o=16_airmass=1,5_photon-sec-arcsec2-nm-m2.fits'
 #radatm0 = fits.getdata(telradfn)
-telradfn = f'{teldir}/eso_armazones_sky_emission_h2o35_am15.dat'
+telradfn = paths.data / 'telluric/eso_armazones_sky_emission_h2o35_am15.dat'
 radatm0 = np.loadtxt(telradfn).T
 
 ### Initialize wavelength bins
@@ -788,8 +789,7 @@ for _, row in valid.iterrows():
             ax.set_xlabel('Wavelength ($\\mu$m)', fontsize=fs)
             #ax.text(0.97, 0.94, blines, fontsize=fs*0.4, ha='right', va='top', transform=ax.transAxes)
         for bi in band_inds:
-            if min(bi) > 1:
-                ax.axvspan(min(bi), max(bi), color='0.8', zorder=0)
+            ax.axvspan(min(bi), max(bi), color='k', alpha=0.1, zorder=0)
     axs[-1].set_title(
         f'{os.path.basename(modelfn).split("-")[0]}, {distance:.1f} pc, {diameter/100.:.1f} m',
         fontsize=fs)
