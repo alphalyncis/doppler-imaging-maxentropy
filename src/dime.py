@@ -19,7 +19,7 @@ from scipy.ndimage.filters import gaussian_filter
 from scipy.ndimage import zoom
 
 from astropy.io import fits
-import starry
+#import starry
 
 import lsd_utils as lsd
 import ELL_map_class as ELL_map
@@ -190,6 +190,7 @@ class DopplerImaging():
         self.modkerns   = np.zeros((self.nobs, self.nchip, self.nk), dtype=float) # unbroaded model profiles
         self.err_LSD_profiles = np.empty((), dtype=float)
         self.obskerns_norm = np.zeros_like(self.kerns)
+        self.snr_obskerns = np.zeros_like(self.kerns)
         self.timeav_profiles   = np.zeros((self.nchip, self.nk), dtype=float) # is avged obskerns over time
         self.intrinsic_profiles = np.zeros((self.nchip, self.nk), dtype=float) # is avged modkerns over time
 
@@ -218,6 +219,7 @@ class DopplerImaging():
 
         ### Set up the R matrix
         self.Rmatrix = np.zeros((self.ncell, self.nobs*self.dv.size), dtype=np.float32)
+        print("Rmatrix shape:", self.Rmatrix.shape)
         
         ### Set up attributes for results
         self.bestparams = None
@@ -402,6 +404,8 @@ class DopplerImaging():
         err_pix = np.array([np.abs(resid[:,:,pix] - np.median(resid, axis=2)) for pix in range(self.nk)]) # error of each pixel in LP by MAD, shape=(nk, nobs, nchips)
         err_LP = 1.4826 * np.median(err_pix, axis=0) # error of each LP, shape=(nobs, nchips)
         err_each_obs = err_LP.mean(axis=1) # error of each obs, shape=(nobs)
+        print("Error of each observation (LSD profile):", err_each_obs)
+        self.snr_obskerns = self.obskerns_norm/err_pix.transpose(1, 2, 0)
         err_observed_1d = np.tile(err_each_obs[:, np.newaxis], (1,self.nk)).ravel() # look like a step function over different times
 
         # mask out non-surface velocity space with weight=0
@@ -415,6 +419,7 @@ class DopplerImaging():
         ### Create diff+flat profile
         self.flatmodel = self.dime.normalize_model(np.dot(self.flatguess, self.Rmatrix))
         if create_obs_from_diff:
+            self.timeav_profiles = np.array([self.obskerns_norm[:,c].mean(axis=0) for c in range(self.nchip)])
             mean_dev = np.median(np.array(
                 [self.obskerns_norm[:,c] - self.timeav_profiles[c] for c in range(self.nchip)]
             ), axis=0) # mean deviation over chips
@@ -776,7 +781,7 @@ class DopplerImaging():
         if contour:
             contour = ax.contour(Lon, Lat, gaussian_filter(self.bestparamgrid, sigma), clevel, colors='white', linewidths=0.5)
         if colorbar:
-            fig.colorbar(im, fraction=0.065, pad=0.2, orientation="horizontal", label="%")
+            fig.colorbar(im, fraction=0.065, pad=0.1, orientation="horizontal", label="%")
         yticks = np.linspace(-np.pi/2, np.pi/2, 7)[1:-1]
         xticks = np.linspace(-np.pi, np.pi, 13)[1:-1]
         ax.set_yticks(yticks, labels=[f'{deg:.0f}˚' for deg in yticks*180/np.pi], fontsize=10, alpha=0.5)
