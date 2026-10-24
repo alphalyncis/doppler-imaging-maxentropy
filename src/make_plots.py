@@ -22,9 +22,9 @@ for row in range(4):
     folder = f"{instruname[row]}_{bands[row]}_{target}"
     if row == 3:
         folder = f"{instruname[row]}_{bands[row]}_{crirestarget}"
-    lp_fig = plt.imread(paths.figures / f"{folder}/LSD_profiles.png")
-    dev_fig = plt.imread(paths.figures / f"{folder}/deviation_map.png")
-    map_fig = plt.imread(paths.figures / f"{folder}/solver1.png")
+    lp_fig = plt.imread(paths.output / f"{folder}/LSD_profiles.png")
+    dev_fig = plt.imread(paths.output / f"{folder}/deviation_map.png")
+    map_fig = plt.imread(paths.output / f"{folder}/solver1.png")
     hspace = 0.20
     axes[row, 0].imshow(lp_fig)
     axes[row, 0].text(-0.55, 0.5, f"{instruname[row]} {bandname[row]}", fontsize=fontsize, transform=axes[row, 0].transAxes, ha="center")

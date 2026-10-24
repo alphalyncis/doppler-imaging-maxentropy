@@ -17,8 +17,8 @@ model_datafileH = paths.data/f'fitted/{instru}_{target}_H_{modelspecH}.pickle'
 params, goodchipsK, modelspecK = load_config(instru, target, "K")
 model_datafileK = paths.data/f'fitted/{instru}_{target}_K_{modelspecK}.pickle'
 
-if not os.path.exists(paths.figures/savedir):
-    os.makedirs(paths.figures/savedir)
+if not os.path.exists(paths.output/savedir):
+    os.makedirs(paths.output/savedir)
 
 ##############################################################################
 ####################      Run!      ##########################################
@@ -48,12 +48,12 @@ print("goodchips:", goodchips)
 
 dmap = DopplerImaging(wav_nm, goodchips, params_dict=params)
 dmap.load_data(observed, template, error)
-dmap.make_lsd_profile(modelspecK, plot_lsd_profiles=True, plot_deviation_map=True, savedir=paths.figures/f"{savedir}/")
+dmap.make_lsd_profile(modelspecK, plot_lsd_profiles=True, plot_deviation_map=True, savedir=paths.output/f"{savedir}/")
 dmap.solve(create_obs_from_diff=True, solver='scipy')
 
-dmap.plot_mollweide_map(vmin=85, vmax=110, savedir=paths.figures/f"{savedir}/solver1.png")
+dmap.plot_mollweide_map(vmin=85, vmax=110, savedir=paths.output/f"{savedir}/solver1.png")
 
-dmap.plot_mecator_map(vmin=85, vmax=110, savedir=paths.figures/f"{savedir}/mecator.png")
+dmap.plot_mecator_map(vmin=85, vmax=110, savedir=paths.output/f"{savedir}/mecator.png")
 
 plt.figure(figsize=(18,4.6))
 sz=20
@@ -67,7 +67,7 @@ plt.subplot(133)
 dmap.plot_deviation_map(dmap.obs_2d - dmap.bestmodel_2d, newfig=False)
 plt.title("Residual", fontsize=sz)
 plt.colorbar()
-plt.savefig(paths.figures/f"{savedir}/devs_{target}_HK.png", bbox_inches="tight", dpi=150, transparent=True)
+plt.savefig(paths.output/f"{savedir}/devs_{target}_HK.png", bbox_inches="tight", dpi=150, transparent=True)
 
 
 print("Run success.")

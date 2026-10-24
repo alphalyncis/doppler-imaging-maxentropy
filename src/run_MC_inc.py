@@ -4,8 +4,8 @@ import paths
 import os
 
 savedir = "MC_inc"
-if not os.path.exists(paths.figures/savedir):
-    os.makedirs(paths.figures/savedir)
+if not os.path.exists(paths.output/savedir):
+    os.makedirs(paths.output/savedir)
 
 ### Measurements
 vsini =     {"WISE1049B": {"K": 27.3, "H": 31.9, "avg": 28.6},
@@ -89,4 +89,4 @@ print(f"inc median: {np.median(inc_arr):.1f}")
 print(f"inc mean: {np.mean(inc_arr):.1f}")
 print(f"inc std: {np.std(inc_arr):.1f}")
 
-plt.savefig(paths.figures / f"{savedir}/{target}_inc.png", dpi=150, transparent=True)
+plt.savefig(paths.output / f"{savedir}/{target}_inc.png", dpi=150, transparent=True)

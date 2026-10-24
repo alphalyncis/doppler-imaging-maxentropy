@@ -1,6 +1,6 @@
 # Doppler Imaging with Maximum Entropy
 
-Doppler imaging  of brown dwarfs from high-resolution spectra using the maximum-entropy method. Code for **Chen et al. 2024** (IGRINS Doppler imaging of WISE1049AB) plus follow-up work on CRIRES and on ELT/METIS L- and M-band simulations.
+Doppler imaging of brown dwarfs from high-resolution spectra using the maximum-entropy method. Repository for **Chen et al. 2024** (IGRINS Doppler imaging of WISE1049AB) plus follow-up work on CRIRES and on ELT/METIS L- and M-band simulations.
 
 > Lineage: Ian Crossfield (Python 2.7) → Emma Bubb (Python 3) → Xueqing Chen
 > (class-based rewrite, 2024). Tested on **Python 3.9.6 only**.
@@ -86,7 +86,7 @@ model) live in **`src/config.py`** → `load_config(instru, target, band)`.
 | `ELL_map_class.py`   | Planetary surface map / equal-area grid (from Crossfield). |
 | `lsd_utils.py`       | Least-Squares Deconvolution helpers. |
 | `config.py`          | All target/instrument parameters + `load_config()`. |
-| `paths.py`           | Repo path constants (`paths.data`, `paths.figures`, …). |
+| `paths.py`           | Repo path constants (`paths.data`, `paths.output`, …). |
 
 ### Stage-1 fitting (`src/`)
 - `fit_IGRINS.py`, `fit_CRIRES.py`, `fit_Kband.py`, `fit_Lband.py`,

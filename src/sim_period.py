@@ -20,8 +20,8 @@ for period_true in [3, 5, 7, 10, 12]:
     period = period_true
     savedir = f"sim_period/{period_true}"
 
-    if not os.path.exists(paths.figures / savedir):
-        os.makedirs(paths.figures / savedir)
+    if not os.path.exists(paths.output / savedir):
+        os.makedirs(paths.output / savedir)
 
 
         # set time and period parameters
@@ -90,7 +90,7 @@ for period_true in [3, 5, 7, 10, 12]:
 
     #lin_map = solve_starry_lin(mean_spectrum, observed, wav_nm, wav0_nm, kwargs_run, kwargs_fig, annotate=True)
     #plt.figure(figsize=(5,3))
-    #plt.savefig(paths.figures / f"{savedir}/solver4.pdf", bbox_inches="tight", dpi=300)
+    #plt.savefig(paths.output / f"{savedir}/solver4.pdf", bbox_inches="tight", dpi=300)
 
     #opt_map = solve_starry_opt(mean_spectrum, observed, wav_nm, wav0_nm, kwargs_run, kwargs_fig, lr=lr, niter=niter, annotate=True)
 

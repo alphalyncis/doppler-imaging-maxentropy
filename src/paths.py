@@ -13,8 +13,5 @@ src = root / "src"
 # Absolute path to the `src/data` folder (contains datasets)
 data = root / "data"
 
-# Absolute path to the `src/scripts` folder (contains figure/pipeline scripts)
-scripts = src / "scripts"
-
-# Absolute path to the `src/tex/figures` folder (contains figure output)
-figures = root / "output"
+# Absolute path to the output folder
+output = root / "output"

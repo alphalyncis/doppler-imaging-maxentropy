@@ -15,8 +15,8 @@ savedir = f"nktest_{instru}_{band}_{target}"
 params, goodchips, modelspec = load_config(instru, target, band)
 model_datafile = paths.data/f'fitted/{instru}_{target}_{band}_{modelspec}.pickle'
 
-if not os.path.exists(paths.figures/savedir):
-    os.makedirs(paths.figures/savedir)
+if not os.path.exists(paths.output/savedir):
+    os.makedirs(paths.output/savedir)
 
 start = 72 if band == "K" else 99 # starting order number
 linemark = 100
@@ -67,7 +67,7 @@ plt.ylabel("S/N of line profile")
 plt.text(0.75, 0.93, f"{instru} {band}", fontsize=12, transform=plt.gca().transAxes)
 plt.legend(labels=[f"order {c+1}" for c in goodchips], fontsize=7, bbox_to_anchor=(1,1))
 
-plt.savefig(paths.figures/f"{savedir}/snr_LPs.png", dpi=100, transparent=True)
+plt.savefig(paths.output/f"{savedir}/snr_LPs.png", dpi=100, transparent=True)
 
 # Plot noise of LPs
 plt.figure(figsize=(5,4))
