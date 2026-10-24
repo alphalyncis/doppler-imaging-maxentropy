@@ -1,15 +1,19 @@
 
 # Figure output
 src/tex/figures/*
+scripts/*.png
+scripts/*.gif
 
 # Miscellaneous
 __pycache__
 *.synctex.gz
 **/.DS_Store
+*.zip
 
 # virtual env
 venv
 
 # data
 data/fitted/*
+datafiles
 output
